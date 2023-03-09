@@ -42,6 +42,8 @@ static const int MAX_WIFI_CONNECTION_ATTEMPTS = 500;
 
 #define WIFI_MAX_TCP_CLIENTS     4
 
+#define WIFI_HOSTNAME "rtk-express"
+
 //Throttle the time between connection attempts
 //ms - Max of 4,294,967,295 or 4.3M seconds or 71,000 minutes or 1193 hours or 49 days between attempts
 static int wifiConnectionAttempts = 0; //Count the number of connection attempts between restarts
@@ -75,7 +77,7 @@ void wifiDisplayIpAddress()
 {
   systemPrint("WiFi IP address: ");
   systemPrint(WiFi.localIP());
-  systemPrintf(" RSSI: %d\r\n", WiFi.RSSI());
+  systemPrintf(" Hostname: %s RSSI: %d\r\n", WIFI_HOSTNAME, WiFi.RSSI());
 
   wifiDisplayTimer = millis();
 }
@@ -292,6 +294,9 @@ void wifiStart()
   if (wifiIsConnected() == true) return; //We don't need to do anything
 
   if (wifiState > WIFI_OFF) return; //We're in the midst of connecting
+  
+  //Set the hostname to find this device without knowing the IP
+  WiFi.setHostname(WIFI_HOSTNAME);
 
   log_d("Starting WiFi");
 
@@ -678,7 +683,9 @@ void tcpUpdate()
     wifiTcpServer->begin();
     online.tcpServer = true;
     systemPrint("TCP Server online, IP Address ");
-    systemPrintln(WiFi.localIP());
+    systemPrint(WiFi.localIP());
+    systemPrint(", Port ");
+    systemPrintln(settings.wifiTcpPort);
   }
 #endif
 }
