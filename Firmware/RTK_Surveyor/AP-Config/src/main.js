@@ -18,6 +18,8 @@ function ge(e) {
     return document.getElementById(e);
 }
 
+var fixedLat = 0;
+var fixedLong = 0;
 var platformPrefix = "Surveyor";
 var geodeticLat = 40.01;
 var geodeticLon = -105.19;
@@ -30,7 +32,13 @@ var fileNumber = 0;
 var numberOfFilesSelected = 0;
 var selectedFiles = "";
 var showingFileList = false;
+var obtainedMessageList = false;
+var obtainedMessageListBase = false;
+var showingMessageRTCMList = false;
 var fileTableText = "";
+var messageText = "";
+var lastMessageType = "";
+var lastMessageTypeBase = "";
 
 var recordsECEF = [];
 var recordsGeodetic = [];
@@ -40,6 +48,25 @@ var resetTimeout;
 var sendDataTimeout;
 var checkNewFirmwareTimeout;
 var getNewFirmwareTimeout;
+
+const CoordinateTypes = {
+    COORDINATE_INPUT_TYPE_DD: 0, //Default DD.ddddddddd
+    COORDINATE_INPUT_TYPE_DDMM: 1, //DDMM.mmmmm
+    COORDINATE_INPUT_TYPE_DD_MM: 2, //DD MM.mmmmm
+    COORDINATE_INPUT_TYPE_DD_MM_DASH: 3, //DD-MM.mmmmm
+    COORDINATE_INPUT_TYPE_DD_MM_SYMBOL: 4, //DD°MM.mmmmmmm'
+    COORDINATE_INPUT_TYPE_DDMMSS: 5, //DD MM SS.ssssss
+    COORDINATE_INPUT_TYPE_DD_MM_SS: 6, //DD MM SS.ssssss
+    COORDINATE_INPUT_TYPE_DD_MM_SS_DASH: 7, //DD-MM-SS.ssssss
+    COORDINATE_INPUT_TYPE_DD_MM_SS_SYMBOL: 8, //DD°MM'SS.ssssss"
+    COORDINATE_INPUT_TYPE_DDMMSS_NO_DECIMAL: 9, //DDMMSS - No decimal
+    COORDINATE_INPUT_TYPE_DD_MM_SS_NO_DECIMAL: 10, //DD MM SS - No decimal
+    COORDINATE_INPUT_TYPE_DD_MM_SS_DASH_NO_DECIMAL: 11, //DD-MM-SS - No decimal
+    COORDINATE_INPUT_TYPE_INVALID_UNKNOWN: 12,
+}
+
+var convertedCoordinate = 0.0;
+var coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD;
 
 function parseIncoming(msg) {
     //console.log("incoming message: " + msg);
@@ -69,6 +96,10 @@ function parseIncoming(msg) {
                 show("baseConfig");
                 hide("sensorConfig");
                 hide("ppConfig");
+                hide("ethernetConfig");
+                hide("ntpConfig");
+                //hide("allowWiFiOverEthernetClient"); //For future expansion
+                //hide("allowWiFiOverEthernetServer"); //For future expansion
 
                 hide("dataPortChannelDropdown");
             }
@@ -76,47 +107,57 @@ function parseIncoming(msg) {
                 show("baseConfig");
                 hide("sensorConfig");
                 hide("ppConfig");
+                hide("ethernetConfig");
+                hide("ntpConfig");
+                //hide("allowWiFiOverEthernetClient"); //For future expansion
+                //hide("allowWiFiOverEthernetServer"); //For future expansion
             }
             else if (platformPrefix == "Express Plus") {
                 hide("baseConfig");
                 show("sensorConfig");
                 hide("ppConfig");
+                hide("ethernetConfig");
+                hide("ntpConfig");
+                //hide("allowWiFiOverEthernetClient"); //For future expansion
+                //hide("allowWiFiOverEthernetServer"); //For future expansion
 
                 ge("muxChannel2").innerHTML = "Wheel/Dir Encoder";
-
-                hide("msgUBX_NAV_SVIN"); //Hide unsupported messages
-                hide("msgUBX_RTCM_1005");
-                hide("msgUBX_RTCM_1074");
-                hide("msgUBX_RTCM_1077");
-                hide("msgUBX_RTCM_1084");
-                hide("msgUBX_RTCM_1087");
-
-                hide("msgUBX_RTCM_1094");
-                hide("msgUBX_RTCM_1097");
-                hide("msgUBX_RTCM_1124");
-                hide("msgUBX_RTCM_1127");
-                hide("msgUBX_RTCM_1230");
-
-                hide("msgUBX_RTCM_4072_0");
-                hide("msgUBX_RTCM_4072_1");
-
-                show("msgUBX_ESF_MEAS");
-                show("msgUBX_ESF_RAW");
-                show("msgUBX_ESF_STATUS");
-                show("msgUBX_ESF_ALG");
-                show("msgUBX_ESF_INS");
             }
             else if (platformPrefix == "Facet L-Band") {
                 show("baseConfig");
                 hide("sensorConfig");
                 show("ppConfig");
+                hide("ethernetConfig");
+                hide("ntpConfig");
+                //hide("allowWiFiOverEthernetClient"); //For future expansion
+                //hide("allowWiFiOverEthernetServer"); //For future expansion
+            }
+            else if (platformPrefix == "Reference Station") {
+                show("baseConfig");
+                hide("sensorConfig");
+                hide("ppConfig");
+                show("ethernetConfig");
+                show("ntpConfig");
+                //hide("allowWiFiOverEthernetClient"); //For future expansion
+                //hide("allowWiFiOverEthernetServer"); //For future expansion
+            }
+        }
+        else if (id.includes("zedFirmwareVersionInt")) {
+            //Must come above zedFirmwareVersion test
+            //Modify settings due to firmware limitations
+            if (val >= 121) {
+                select = ge("dynamicModel");
+                let newOption = new Option('Mower', '11');
+                select.add(newOption, undefined);
+                newOption = new Option('E-Scooter', '12');
+                select.add(newOption, undefined);
             }
         }
         //Strings generated by RTK unit
         else if (id.includes("sdFreeSpace")
             || id.includes("sdSize")
-            || id.includes("zedFirmwareVersion")
             || id.includes("hardwareID")
+            || id.includes("zedFirmwareVersion")
             || id.includes("daysRemaining")
             || id.includes("profile0Name")
             || id.includes("profile1Name")
@@ -128,6 +169,8 @@ function parseIncoming(msg) {
             || id.includes("profile7Name")
             || id.includes("radioMAC")
             || id.includes("deviceBTID")
+            || id.includes("logFileName")
+            || id.includes("batteryPercent")
         ) {
             ge(id).innerHTML = val;
         }
@@ -202,6 +245,35 @@ function parseIncoming(msg) {
         else if (id.includes("fmNext")) {
             sendFile();
         }
+        else if (id.includes("UBX_")) {
+            var messageName = id;
+            var messageRate = val;
+            var messageNameLabel = "";
+
+            var messageData = messageName.split('_');
+            if (messageData.length >= 3) {
+                var messageType = messageData[1]; //UBX_RTCM_1074 = RTCM
+                if (lastMessageType != messageType) {
+                    lastMessageType = messageType;
+                    messageText += "<hr>";
+                }
+
+                messageNameLabel = messageData[1] + "_" + messageData[2]; //RTCM_1074
+                if (messageData.length == 4) {
+                    messageNameLabel = messageData[1] + "_" + messageData[2] + "_" + messageData[3]; //RTCM_4072_1
+                }
+
+                //Remove Base if seen
+                messageNameLabel = messageNameLabel.split('Base').join(''); //UBX_RTCM_1074Base
+            }
+
+            messageText += "<div class='form-group row' id='msg" + messageName + "'>";
+            messageText += "<label for='" + messageName + "' class='col-sm-4 col-6 col-form-label'>" + messageNameLabel + ":</label>";
+            messageText += "<div class='col-sm-4 col-4'><input type='number' class='form-control'";
+            messageText += "id='" + messageName + "' value='" + messageRate + "'>";
+            messageText += "<p id='" + messageName + "Error' class='inlineError'></p>";
+            messageText += "</div></div>";
+        }
         else if (id.includes("checkingNewFirmware")) {
             checkingNewFirmware();
         }
@@ -213,6 +285,18 @@ function parseIncoming(msg) {
         }
         else if (id.includes("otaFirmwareStatus")) {
             otaFirmwareStatus(val);
+        }
+        else if (id.includes("batteryIconFileName")) {
+            ge("batteryIconFileName").src = val;
+        }
+        else if (id.includes("coordinateInputType")) {
+            coordinateInputType = val;
+        }
+        else if (id.includes("fixedLat")) {
+            fixedLat = val;
+        }
+        else if (id.includes("fixedLong")) {
+            fixedLong = val;
         }
 
         //Check boxes / radio buttons
@@ -263,10 +347,15 @@ function parseIncoming(msg) {
         ge("enablePointPerfectCorrections").dispatchEvent(new CustomEvent('change'));
         ge("radioType").dispatchEvent(new CustomEvent('change'));
         ge("antennaReferencePoint").dispatchEvent(new CustomEvent('change'));
+        ge("autoIMUmountAlignment").dispatchEvent(new CustomEvent('change'));
+        ge("enableARPLogging").dispatchEvent(new CustomEvent('change'));
 
         updateECEFList();
         updateGeodeticList();
         tcpBoxes();
+        tcpBoxesEthernet();
+        dhcpEthernet();
+        updateLatLong();
     }
 
 }
@@ -374,6 +463,8 @@ function validateFields() {
     collapseSection("collapsePortsConfig", "portsCaret");
     collapseSection("collapseRadioConfig", "radioCaret");
     collapseSection("collapseSystemConfig", "systemCaret");
+    collapseSection("collapseEthernetConfig", "ethernetCaret");
+    collapseSection("collapseNTPConfig", "ntpCaret");
 
     errorCount = 0;
 
@@ -383,6 +474,9 @@ function validateFields() {
     //GNSS Config
     checkElementValue("measurementRateHz", 0.00012, 10, "Must be between 0.00012 and 10Hz", "collapseGNSSConfig");
     checkConstellations();
+
+    checkElementValue("minElev", 0, 90, "Must be between 0 and 90", "collapseGNSSConfig");
+    checkElementValue("minCNO", 0, 90, "Must be between 0 and 90", "collapseGNSSConfig");
 
     if (ge("enableNtripClient").checked) {
         checkElementString("ntripClient_CasterHost", 1, 30, "Must be 1 to 30 characters", "collapseGNSSConfig");
@@ -401,95 +495,11 @@ function validateFields() {
         ge("ntripClient_TransmitGGA").checked = true;
     }
 
-    checkMessageValue("UBX_NMEA_DTM");
-    checkMessageValue("UBX_NMEA_GBS");
-    checkMessageValue("UBX_NMEA_GGA");
-    checkMessageValue("UBX_NMEA_GLL");
-    checkMessageValue("UBX_NMEA_GNS");
-
-    checkMessageValue("UBX_NMEA_GRS");
-    checkMessageValue("UBX_NMEA_GSA");
-    checkMessageValue("UBX_NMEA_GST");
-    checkMessageValue("UBX_NMEA_GSV");
-    checkMessageValue("UBX_NMEA_RMC");
-
-    checkMessageValue("UBX_NMEA_VLW");
-    checkMessageValue("UBX_NMEA_VTG");
-    checkMessageValue("UBX_NMEA_ZDA");
-
-    checkMessageValue("UBX_NAV_ATT");
-    checkMessageValue("UBX_NAV_CLOCK");
-    checkMessageValue("UBX_NAV_DOP");
-    checkMessageValue("UBX_NAV_EOE");
-    checkMessageValue("UBX_NAV_GEOFENCE");
-
-    checkMessageValue("UBX_NAV_HPPOSECEF");
-    checkMessageValue("UBX_NAV_HPPOSLLH");
-    checkMessageValue("UBX_NAV_ODO");
-    checkMessageValue("UBX_NAV_ORB");
-    checkMessageValue("UBX_NAV_POSECEF");
-
-    checkMessageValue("UBX_NAV_POSLLH");
-    checkMessageValue("UBX_NAV_PVT");
-    checkMessageValue("UBX_NAV_RELPOSNED");
-    checkMessageValue("UBX_NAV_SAT");
-    checkMessageValue("UBX_NAV_SIG");
-
-    checkMessageValue("UBX_NAV_STATUS");
-    checkMessageValue("UBX_NAV_SVIN");
-    checkMessageValue("UBX_NAV_TIMEBDS");
-    checkMessageValue("UBX_NAV_TIMEGAL");
-    checkMessageValue("UBX_NAV_TIMEGLO");
-
-    checkMessageValue("UBX_NAV_TIMEGPS");
-    checkMessageValue("UBX_NAV_TIMELS");
-    checkMessageValue("UBX_NAV_TIMEUTC");
-    checkMessageValue("UBX_NAV_VELECEF");
-    checkMessageValue("UBX_NAV_VELNED");
-
-    checkMessageValue("UBX_RXM_MEASX");
-    checkMessageValue("UBX_RXM_RAWX");
-    checkMessageValue("UBX_RXM_RLM");
-    checkMessageValue("UBX_RXM_RTCM");
-    checkMessageValue("UBX_RXM_SFRBX");
-
-    checkMessageValue("UBX_MON_COMMS");
-    checkMessageValue("UBX_MON_HW2");
-    checkMessageValue("UBX_MON_HW3");
-    checkMessageValue("UBX_MON_HW");
-    checkMessageValue("UBX_MON_IO");
-
-    checkMessageValue("UBX_MON_MSGPP");
-    checkMessageValue("UBX_MON_RF");
-    checkMessageValue("UBX_MON_RXBUF");
-    checkMessageValue("UBX_MON_RXR");
-    checkMessageValue("UBX_MON_TXBUF");
-
-    checkMessageValue("UBX_TIM_TM2");
-    checkMessageValue("UBX_TIM_TP");
-    checkMessageValue("UBX_TIM_VRFY");
-
-    checkMessageValue("UBX_RTCM_1005");
-    checkMessageValue("UBX_RTCM_1074");
-    checkMessageValue("UBX_RTCM_1077");
-    checkMessageValue("UBX_RTCM_1084");
-    checkMessageValue("UBX_RTCM_1087");
-
-    checkMessageValue("UBX_RTCM_1094");
-    checkMessageValue("UBX_RTCM_1097");
-    checkMessageValue("UBX_RTCM_1124");
-    checkMessageValue("UBX_RTCM_1127");
-    checkMessageValue("UBX_RTCM_1230");
-
-    checkMessageValue("UBX_RTCM_4072_0");
-    checkMessageValue("UBX_RTCM_4072_1");
-
-    if (platformPrefix == "Express Plus") {
-        checkMessageValue("UBX_ESF_MEAS");
-        checkMessageValue("UBX_ESF_RAW");
-        checkMessageValue("UBX_ESF_STATUS");
-        checkMessageValue("UBX_ESF_ALG");
-        checkMessageValue("UBX_ESF_INS");
+    //Check all UBX message boxes
+    var ubxMessages = document.querySelectorAll('input[id^=UBX_]'); //match all ids starting with UBX_
+    for (let x = 0; x < ubxMessages.length; x++) {
+        var messageName = ubxMessages[x].id;
+        checkMessageValue(messageName);
     }
 
     //Base Config
@@ -501,8 +511,8 @@ function validateFields() {
             clearElement("fixedEcefX", -1280206.568);
             clearElement("fixedEcefY", -4716804.403);
             clearElement("fixedEcefZ", 4086665.484);
-            clearElement("fixedLat", 40.09029479);
-            clearElement("fixedLong", -105.18505761);
+            clearElement("fixedLatText", 40.09029479);
+            clearElement("fixedLongText", -105.18505761);
             clearElement("fixedAltitude", 1560.089);
             clearElement("antennaHeight", 0);
             clearElement("antennaReferencePoint", 0);
@@ -512,9 +522,11 @@ function validateFields() {
             clearElement("observationPositionAccuracy", 5.0);
 
             if (ge("fixedBaseCoordinateTypeECEF").checked) {
-                clearElement("fixedLat", 40.09029479);
-                clearElement("fixedLong", -105.18505761);
+                clearElement("fixedLatText", 40.09029479);
+                clearElement("fixedLongText", -105.18505761);
                 clearElement("fixedAltitude", 1560.089);
+                clearElement("antennaHeight", 0);
+                clearElement("antennaReferencePoint", 0);
 
                 checkElementValue("fixedEcefX", -7000000, 7000000, "Must be -7000000 to 7000000", "collapseBaseConfig");
                 checkElementValue("fixedEcefY", -7000000, 7000000, "Must be -7000000 to 7000000", "collapseBaseConfig");
@@ -525,8 +537,7 @@ function validateFields() {
                 clearElement("fixedEcefY", -4716804.403);
                 clearElement("fixedEcefZ", 4086665.484);
 
-                checkElementValue("fixedLat", -180, 180, "Must be -180 to 180", "collapseBaseConfig");
-                checkElementValue("fixedLong", -180, 180, "Must be -180 to 180", "collapseBaseConfig");
+                checkLatLong(); //Verify Lat/Long input type
                 checkElementValue("fixedAltitude", -11034, 8849, "Must be -11034 to 8849", "collapseBaseConfig");
 
                 checkElementValue("antennaHeight", -15000, 15000, "Must be -15000 to 15000", "collapseBaseConfig");
@@ -554,13 +565,21 @@ function validateFields() {
     if (platformPrefix == "Facet L-Band") {
         if (ge("enablePointPerfectCorrections").checked == true) {
             value = ge("pointPerfectDeviceProfileToken").value;
-            console.log(value);
             if (value.length > 0)
                 checkElementString("pointPerfectDeviceProfileToken", 36, 36, "Must be 36 characters", "collapsePPConfig");
         }
         else {
             clearElement("pointPerfectDeviceProfileToken", "");
             ge("autoKeyRenewal").checked = true;
+        }
+    }
+
+    //Sensor Config
+    if (platformPrefix == "Express Plus") {
+        if (ge("autoIMUmountAlignment").checked == false) {
+            checkElementValue("imuYaw", 0, 360, "Must be between 0.0 to 360.0", "collapseSensorConfig");
+            checkElementValue("imuPitch", -90, 90, "Must be between -90.0 to 90.0", "collapseSensorConfig");
+            checkElementValue("imuRoll", -180, 180, "Must be between -180.0 to 180.0", "collapseSensorConfig");
         }
     }
 
@@ -576,6 +595,7 @@ function validateFields() {
     if (ge("enableTcpClient").checked || ge("enableTcpServer").checked) {
         checkElementString("wifiTcpPort", 1, 65535, "Must be 1 to 65535", "collapseWiFiConfig");
     }
+    checkCheckboxMutex("enableTcpClient", "enableTcpServer", "TCP Client and Server can not be enabled at the same time", "collapseWiFiConfig");
 
     //System Config
     if (ge("enableLogging").checked) {
@@ -587,6 +607,46 @@ function validateFields() {
         clearElement("maxLogLength_minutes", 60 * 24);
     }
 
+    if (ge("enableARPLogging").checked) {
+        checkElementValue("ARPLoggingInterval", 1, 600, "Must be 1 to 600", "collapseSystemConfig");
+    }
+    else {
+        clearElement("ARPLoggingInterval", 10);
+    }
+
+    //Ethernet
+    if (platformPrefix == "Reference Station") {
+        //if (ge("ethernetDHCP").checked == false) {
+        checkElementIPAddress("ethernetIP", "Must be nnn.nnn.nnn.nnn", "collapseEthernetConfig");
+        checkElementIPAddress("ethernetDNS", "Must be nnn.nnn.nnn.nnn", "collapseEthernetConfig");
+        checkElementIPAddress("ethernetGateway", "Must be nnn.nnn.nnn.nnn", "collapseEthernetConfig");
+        checkElementIPAddress("ethernetSubnet", "Must be nnn.nnn.nnn.nnn", "collapseEthernetConfig");
+        checkElementValue("ethernetHttpPort", 0, 65535, "Must be 0 to 65535", "collapseEthernetConfig");
+        checkElementValue("ethernetNtpPort", 0, 65535, "Must be 0 to 65535", "collapseEthernetConfig");
+        if (ge("enableTcpClientEthernet").checked) {
+            checkElementString("ethernetTcpPort", 1, 65535, "Must be 1 to 65535", "collapseEthernetConfig");
+            checkElementString("hostForTCPClient", 0, 50, "Must be 0 to 50 characters", "collapseEthernetConfig");
+        }
+        //}
+        //else {
+        //    clearElement("ethernetIP", "192.168.0.123");
+        //    clearElement("ethernetDNS", "192.168.4.100");
+        //    clearElement("ethernetGateway", "192.168.0.1");
+        //    clearElement("ethernetSubnet", "255.255.255.0");
+        //    clearElement("ethernetHttpPort", 80);
+        //    clearElement("ethernetNtpPort", 123);
+        //}
+    }
+
+    //NTP
+    if (platformPrefix == "Reference Station") {
+        checkElementValue("ntpPollExponent", 3, 17, "Must be 3 to 17", "collapseNTPConfig");
+        checkElementValue("ntpPrecision", -30, 0, "Must be -30 to 0", "collapseNTPConfig");
+        checkElementValue("ntpRootDelay", 0, 10000000, "Must be 0 to 10,000,000", "collapseNTPConfig");
+        checkElementValue("ntpRootDispersion", 0, 10000000, "Must be 0 to 10,000,000", "collapseNTPConfig");
+        checkElementString("ntpReferenceId", 1, 4, "Must be 1 to 4 chars", "collapseNTPConfig");
+    }
+
     //Port Config
     if (platformPrefix != "Surveyor") {
         if (ge("enableExternalPulse").checked) {
@@ -595,7 +655,7 @@ function validateFields() {
         }
         else {
             clearElement("externalPulseTimeBetweenPulse_us", 100000);
-            clearElement("externalPulseLength_us", 900000);
+            clearElement("externalPulseLength_us", 1000000);
             ge("externalPulsePolarity").value = 0;
         }
     }
@@ -603,7 +663,7 @@ function validateFields() {
 
 var currentProfileNumber = 0;
 
-function changeConfig() {
+function changeProfile() {
     validateFields();
 
     if (errorCount == 1) {
@@ -628,13 +688,15 @@ function changeConfig() {
         websocket.send("setProfile," + currentProfileNumber + ",");
 
         ge("collapseProfileConfig").classList.add('show');
-        ge("collapseGNSSConfig").classList.add('show');
+        collapseSection("collapseGNSSConfig", "gnssCaret");
         collapseSection("collapseGNSSConfigMsg", "gnssMsgCaret");
         collapseSection("collapseBaseConfig", "baseCaret");
         collapseSection("collapseSensorConfig", "sensorCaret");
         collapseSection("collapsePPConfig", "pointPerfectCaret");
         collapseSection("collapsePortsConfig", "portsCaret");
         collapseSection("collapseSystemConfig", "systemCaret");
+        collapseSection("collapseEthernetConfig", "ethernetCaret");
+        collapseSection("collapseNTPConfig", "ntpCaret");
     }
 }
 
@@ -684,6 +746,63 @@ function checkBitMapValue(id, min, max, bitMap, errorText, collapseID) {
     }
 }
 
+//Check if Lat/Long input types are decipherable
+function checkLatLong() {
+    var id = "fixedLatText";
+    var collapseID = "collapseBaseConfig";
+    ge("detectedFormatText").value = "";
+
+    var inputTypeLat = identifyInputType(ge(id).value)
+    if (inputTypeLat == CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN) {
+        var errorText = "Coordinate format unknown";
+        ge(id + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(collapseID).classList.add('show');
+        errorCount++;
+    }
+    else if (convertedCoordinate < -180 || convertedCoordinate > 180) {
+        var errorText = "Must be -180 to 180";
+        ge(id + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(collapseID).classList.add('show');
+        errorCount++;
+    }
+    else
+        clearError(id);
+
+    id = "fixedLongText";
+    var inputTypeLong = identifyInputType(ge(id).value)
+    if (inputTypeLong == CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN) {
+        var errorText = "Coordinate format unknown";
+        ge(id + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(collapseID).classList.add('show');
+        errorCount++;
+    }
+    else if (convertedCoordinate < -180 || convertedCoordinate > 180) {
+        var errorText = "Must be -180 to 180";
+        ge(id + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(collapseID).classList.add('show');
+        errorCount++;
+    }
+    else
+        clearError(id);
+
+    if (inputTypeLong != inputTypeLat) {
+        var errorText = "Formats must match";
+        ge(id + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(collapseID).classList.add('show');
+        errorCount++;
+        ge("detectedFormatText").innerHTML = printableInputType(CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN);
+    }
+    else
+        ge("detectedFormatText").innerHTML = printableInputType(inputTypeLat);
+}
+
+//Based on the coordinateInputType, format the lat/long text boxes
+function updateLatLong() {
+    ge("fixedLatText").value = convertInput(fixedLat, coordinateInputType);
+    ge("fixedLongText").value = convertInput(fixedLong, coordinateInputType);
+    checkLatLong(); //Updates the detected format
+}
+
 function checkElementValue(id, min, max, errorText, collapseID) {
     value = ge(id).value;
     if (value < min || value > max || value == "") {
@@ -707,12 +826,41 @@ function checkElementString(id, min, max, errorText, collapseID) {
         clearError(id);
 }
 
+function checkElementIPAddress(id, errorText, collapseID) {
+    value = ge(id).value;
+    var data = value.split('.');
+    if ((data.length != 4)
+        || ((data[0] == "") || (isNaN(Number(data[0]))) || (data[0] < 0) || (data[0] > 255))
+        || ((data[1] == "") || (isNaN(Number(data[1]))) || (data[1] < 0) || (data[1] > 255))
+        || ((data[2] == "") || (isNaN(Number(data[2]))) || (data[2] < 0) || (data[2] > 255))
+        || ((data[3] == "") || (isNaN(Number(data[3]))) || (data[3] < 0) || (data[3] > 255))) {
+        ge(id + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(collapseID).classList.add('show');
+        errorCount++;
+    }
+    else
+        clearError(id);
+}
+
 function checkElementCasterUser(id, badUserName, errorText, collapseID) {
     if (ge("ntripClient_CasterHost").value.toLowerCase() == "rtk2go.com") {
         checkElementString(id, 1, 50, errorText, collapseID);
     }
     else
         clearError(id);
+}
+
+function checkCheckboxMutex(id1, id2, errorText, collapseID) {
+    if ((ge(id1).checked) && (ge(id2).checked)) {
+        ge(id1 + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(id2 + 'Error').innerHTML = 'Error: ' + errorText;
+        ge(collapseID).classList.add('show');
+        errorCount++;
+    }
+    else {
+        clearError(id1);
+        clearError(id2);
+    }
 }
 
 function clearElement(id, value) {
@@ -730,94 +878,12 @@ function zeroElement(id) {
 }
 
 function zeroMessages() {
-    zeroElement("UBX_NMEA_DTM");
-    zeroElement("UBX_NMEA_GBS");
-    zeroElement("UBX_NMEA_GGA");
-    zeroElement("UBX_NMEA_GLL");
-    zeroElement("UBX_NMEA_GNS");
 
-    zeroElement("UBX_NMEA_GRS");
-    zeroElement("UBX_NMEA_GSA");
-    zeroElement("UBX_NMEA_GST");
-    zeroElement("UBX_NMEA_GSV");
-    zeroElement("UBX_NMEA_RMC");
-
-    zeroElement("UBX_NMEA_VLW");
-    zeroElement("UBX_NMEA_VTG");
-    zeroElement("UBX_NMEA_ZDA");
-
-    zeroElement("UBX_NAV_ATT");
-    zeroElement("UBX_NAV_CLOCK");
-    zeroElement("UBX_NAV_DOP");
-    zeroElement("UBX_NAV_EOE");
-    zeroElement("UBX_NAV_GEOFENCE");
-
-    zeroElement("UBX_NAV_HPPOSECEF");
-    zeroElement("UBX_NAV_HPPOSLLH");
-    zeroElement("UBX_NAV_ODO");
-    zeroElement("UBX_NAV_ORB");
-    zeroElement("UBX_NAV_POSECEF");
-
-    zeroElement("UBX_NAV_POSLLH");
-    zeroElement("UBX_NAV_PVT");
-    zeroElement("UBX_NAV_RELPOSNED");
-    zeroElement("UBX_NAV_SAT");
-    zeroElement("UBX_NAV_SIG");
-
-    zeroElement("UBX_NAV_STATUS");
-    zeroElement("UBX_NAV_SVIN");
-    zeroElement("UBX_NAV_TIMEBDS");
-    zeroElement("UBX_NAV_TIMEGAL");
-    zeroElement("UBX_NAV_TIMEGLO");
-
-    zeroElement("UBX_NAV_TIMEGPS");
-    zeroElement("UBX_NAV_TIMELS");
-    zeroElement("UBX_NAV_TIMEUTC");
-    zeroElement("UBX_NAV_VELECEF");
-    zeroElement("UBX_NAV_VELNED");
-
-    zeroElement("UBX_RXM_MEASX");
-    zeroElement("UBX_RXM_RAWX");
-    zeroElement("UBX_RXM_RLM");
-    zeroElement("UBX_RXM_RTCM");
-    zeroElement("UBX_RXM_SFRBX");
-
-    zeroElement("UBX_MON_COMMS");
-    zeroElement("UBX_MON_HW2");
-    zeroElement("UBX_MON_HW3");
-    zeroElement("UBX_MON_HW");
-    zeroElement("UBX_MON_IO");
-
-    zeroElement("UBX_MON_MSGPP");
-    zeroElement("UBX_MON_RF");
-    zeroElement("UBX_MON_RXBUF");
-    zeroElement("UBX_MON_RXR");
-    zeroElement("UBX_MON_TXBUF");
-
-    zeroElement("UBX_TIM_TM2");
-    zeroElement("UBX_TIM_TP");
-    zeroElement("UBX_TIM_VRFY");
-
-    zeroElement("UBX_RTCM_1005");
-    zeroElement("UBX_RTCM_1074");
-    zeroElement("UBX_RTCM_1077");
-    zeroElement("UBX_RTCM_1084");
-    zeroElement("UBX_RTCM_1087");
-
-    zeroElement("UBX_RTCM_1094");
-    zeroElement("UBX_RTCM_1097");
-    zeroElement("UBX_RTCM_1124");
-    zeroElement("UBX_RTCM_1127");
-    zeroElement("UBX_RTCM_1230");
-
-    zeroElement("UBX_RTCM_4072_0");
-    zeroElement("UBX_RTCM_4072_1");
-
-    zeroElement("UBX_ESF_MEAS");
-    zeroElement("UBX_ESF_RAW");
-    zeroElement("UBX_ESF_STATUS");
-    zeroElement("UBX_ESF_ALG");
-    zeroElement("UBX_ESF_INS");
+    var ubxMessages = document.querySelectorAll('input[id^=UBX_]'); //match all ids starting with UBX_
+    for (let x = 0; x < ubxMessages.length; x++) {
+        var messageName = ubxMessages[x].id;
+        zeroElement(messageName);
+    }
 }
 function resetToNmeaDefaults() {
     zeroMessages();
@@ -837,17 +903,55 @@ function resetToLoggingDefaults() {
     ge("UBX_RXM_RAWX").value = 1;
     ge("UBX_RXM_SFRBX").value = 1;
 }
+
+function resetToRTCMDefaults() {
+    ge("UBX_RTCM_1005Base").value = 1;
+    ge("UBX_RTCM_1074Base").value = 1;
+    ge("UBX_RTCM_1077Base").value = 0;
+    ge("UBX_RTCM_1084Base").value = 1;
+    ge("UBX_RTCM_1087Base").value = 0;
+
+    ge("UBX_RTCM_1094Base").value = 1;
+    ge("UBX_RTCM_1097Base").value = 0;
+    ge("UBX_RTCM_1124Base").value = 1;
+    ge("UBX_RTCM_1127Base").value = 0;
+    ge("UBX_RTCM_1230Base").value = 10;
+
+    ge("UBX_RTCM_4072_0Base").value = 0;
+    ge("UBX_RTCM_4072_1Base").value = 0;
+}
+
+function resetToLowBandwidthRTCM() {
+    ge("UBX_RTCM_1005Base").value = 10;
+    ge("UBX_RTCM_1074Base").value = 2;
+    ge("UBX_RTCM_1077Base").value = 0;
+    ge("UBX_RTCM_1084Base").value = 2;
+    ge("UBX_RTCM_1087Base").value = 0;
+
+    ge("UBX_RTCM_1094Base").value = 2;
+    ge("UBX_RTCM_1097Base").value = 0;
+    ge("UBX_RTCM_1124Base").value = 2;
+    ge("UBX_RTCM_1127Base").value = 0;
+    ge("UBX_RTCM_1230Base").value = 10;
+
+    ge("UBX_RTCM_4072_0Base").value = 0;
+    ge("UBX_RTCM_4072_1Base").value = 0;
+}
+
 function useECEFCoordinates() {
     ge("fixedEcefX").value = ecefX;
     ge("fixedEcefY").value = ecefY;
     ge("fixedEcefZ").value = ecefZ;
 }
 function useGeodeticCoordinates() {
-    ge("fixedLat").value = geodeticLat;
-    ge("fixedLong").value = geodeticLon;
-    ge("fixedAltitude").value = geodeticAlt;
-    var hae = Number(ge("fixedAltitude").value) + Number(ge("antennaHeight").value) / 1000 + Number(ge("antennaReferencePoint").value) / 1000
-    ge("fixedHAE_APC").value = hae.toFixed(3);
+    ge("fixedLatText").value = geodeticLat;
+    ge("fixedLongText").value = geodeticLon;
+    ge("fixedHAE_APC").value = geodeticAlt;
+
+    $("input[name=markRadio][value=1]").prop('checked', true);
+    $("input[name=markRadio][value=2]").prop('checked', false);
+
+    adjustHAE();
 }
 
 function startNewLog() {
@@ -917,7 +1021,7 @@ document.addEventListener("DOMContentLoaded", (event) => {
     var radios = document.querySelectorAll('input[name=profileRadio]');
     for (var i = 0, max = radios.length; i < max; i++) {
         radios[i].onclick = function () {
-            changeConfig();
+            changeProfile();
         }
     }
 
@@ -954,6 +1058,16 @@ document.addEventListener("DOMContentLoaded", (event) => {
         if (ge("fixedBaseCoordinateTypeGeo").checked) {
             hide("ecefConfig");
             show("geodeticConfig");
+
+            if (platformPrefix == "Facet") {
+                ge("antennaReferencePoint").value = 61.4;
+            }
+            else if (platformPrefix == "Facet L-Band") {
+                ge("antennaReferencePoint").value = 69.0;
+            }
+            else {
+                ge("antennaReferencePoint").value = 0.0;
+            }
         }
     });
 
@@ -1062,20 +1176,44 @@ document.addEventListener("DOMContentLoaded", (event) => {
         }
     });
 
+    ge("enableARPLogging").addEventListener("change", function () {
+        if (ge("enableARPLogging").checked) {
+            show("enableARPLoggingDetails");
+        }
+        else {
+            hide("enableARPLoggingDetails");
+        }
+    });
+
     ge("fixedAltitude").addEventListener("change", function () {
-        var hae = Number(ge("fixedAltitude").value) + Number(ge("antennaHeight").value) / 1000 + Number(ge("antennaReferencePoint").value) / 1000;
-        ge("fixedHAE_APC").value = hae.toFixed(3);
+        adjustHAE();
     });
 
     ge("antennaHeight").addEventListener("change", function () {
-        var hae = Number(ge("fixedAltitude").value) + Number(ge("antennaHeight").value) / 1000 + Number(ge("antennaReferencePoint").value) / 1000;
-        ge("fixedHAE_APC").value = hae.toFixed(3);
+        adjustHAE();
     });
 
     ge("antennaReferencePoint").addEventListener("change", function () {
-        var hae = Number(ge("fixedAltitude").value) + Number(ge("antennaHeight").value) / 1000 + Number(ge("antennaReferencePoint").value) / 1000;
-        ge("fixedHAE_APC").value = hae.toFixed(3);
+        adjustHAE();
     });
+
+    ge("fixedHAE_APC").addEventListener("change", function () {
+        adjustHAE();
+    });
+
+    ge("autoIMUmountAlignment").addEventListener("change", function () {
+        if (ge("autoIMUmountAlignment").checked) {
+            ge("imuYaw").disabled = true;
+            ge("imuPitch").disabled = true;
+            ge("imuRoll").disabled = true;
+        }
+        else {
+            ge("imuYaw").disabled = false;
+            ge("imuPitch").disabled = false;
+            ge("imuRoll").disabled = false;
+        }
+    });
+
 })
 
 function addECEF() {
@@ -1106,9 +1244,16 @@ function addECEF() {
 }
 
 function deleteECEF() {
+
     var val = ge("StationCoordinatesECEF").value;
-    if (val > "")
-        recordsECEF.splice(val, 1);
+    if (val > "") {
+        var parts = recordsECEF[val].split(' ');
+        var nickName = parts[0];
+
+        if (confirm("Delete location " + nickName + "?") == true) {
+            recordsECEF.splice(val, 1);
+        }
+    }
     updateECEFList();
 }
 
@@ -1162,8 +1307,7 @@ function addGeodetic() {
     nicknameGeodetic.value = removeBadChars(nicknameGeodetic.value);
 
     checkElementString("nicknameGeodetic", 1, 49, "Must be 1 to 49 characters", "collapseBaseConfig");
-    checkElementValue("fixedLat", -180, 180, "Must be -180 to 180", "collapseBaseConfig");
-    checkElementValue("fixedLong", -180, 180, "Must be -180 to 180", "collapseBaseConfig");
+    checkLatLong();
     checkElementValue("fixedAltitude", -11034, 8849, "Must be -11034 to 8849", "collapseBaseConfig");
     checkElementValue("antennaHeight", -15000, 15000, "Must be -15000 to 15000", "collapseBaseConfig");
     checkElementValue("antennaReferencePoint", -200.0, 200.0, "Must be -200.0 to 200.0", "collapseBaseConfig");
@@ -1174,12 +1318,12 @@ function addGeodetic() {
         for (; index < recordsGeodetic.length; ++index) {
             var parts = recordsGeodetic[index].split(' ');
             if (ge("nicknameGeodetic").value == parts[0]) {
-                recordsGeodetic[index] = nicknameGeodetic.value + ' ' + fixedLat.value + ' ' + fixedLong.value + ' ' + fixedAltitude.value + ' ' + antennaHeight.value + ' ' + antennaReferencePoint.value;
+                recordsGeodetic[index] = nicknameGeodetic.value + ' ' + fixedLatText.value + ' ' + fixedLongText.value + ' ' + fixedAltitude.value + ' ' + antennaHeight.value + ' ' + antennaReferencePoint.value;
                 break;
             }
         }
         if (index == recordsGeodetic.length)
-            recordsGeodetic.push(nicknameGeodetic.value + ' ' + fixedLat.value + ' ' + fixedLong.value + ' ' + fixedAltitude.value + ' ' + antennaHeight.value + ' ' + antennaReferencePoint.value);
+            recordsGeodetic.push(nicknameGeodetic.value + ' ' + fixedLatText.value + ' ' + fixedLongText.value + ' ' + fixedAltitude.value + ' ' + antennaHeight.value + ' ' + antennaReferencePoint.value);
     }
 
     updateGeodeticList();
@@ -1187,9 +1331,33 @@ function addGeodetic() {
 
 function deleteGeodetic() {
     var val = ge("StationCoordinatesGeodetic").value;
-    if (val > "")
-        recordsGeodetic.splice(val, 1);
+    if (val > "") {
+        var parts = recordsGeodetic[val].split(' ');
+        var nickName = parts[0];
+
+        if (confirm("Delete location " + nickName + "?") == true) {
+            recordsGeodetic.splice(val, 1);
+        }
+    }
     updateGeodeticList();
+}
+
+function adjustHAE() {
+
+    var haeMethod = document.querySelector('input[name=markRadio]:checked').value;
+    var hae;
+    if (haeMethod == 1) {
+        ge("fixedHAE_APC").disabled = false;
+        ge("fixedAltitude").disabled = true;
+        hae = Number(ge("fixedHAE_APC").value) - (Number(ge("antennaHeight").value) / 1000 + Number(ge("antennaReferencePoint").value) / 1000);
+        ge("fixedAltitude").value = hae.toFixed(3);
+    }
+    else {
+        ge("fixedHAE_APC").disabled = true;
+        ge("fixedAltitude").disabled = false;
+        hae = Number(ge("fixedAltitude").value) + (Number(ge("antennaHeight").value) / 1000 + Number(ge("antennaReferencePoint").value) / 1000);
+        ge("fixedHAE_APC").value = hae.toFixed(3);
+    }
 }
 
 function loadGeodetic() {
@@ -1197,15 +1365,21 @@ function loadGeodetic() {
     if (val > "") {
         var parts = recordsGeodetic[val].split(' ');
         ge("nicknameGeodetic").value = parts[0];
-        ge("fixedLat").value = parts[1];
-        ge("fixedLong").value = parts[2];
-        ge("fixedAltitude").value = parts[3];
+        ge("fixedLatText").value = parts[1];
+        ge("fixedLongText").value = parts[2];
         ge("antennaHeight").value = parts[4];
         ge("antennaReferencePoint").value = parts[5];
 
+        ge("fixedAltitude").value = parts[3];
+
+        $("input[name=markRadio][value=1]").prop('checked', false);
+        $("input[name=markRadio][value=2]").prop('checked', true);
+
+        adjustHAE();
+
         clearError("nicknameGeodetic");
-        clearError("fixedLat");
-        clearError("fixedLong");
+        clearError("fixedLatText");
+        clearError("fixedLongText");
         clearError("fixedAltitude");
         clearError("antennaHeight");
         clearError("antennaReferencePoint");
@@ -1237,7 +1411,16 @@ function updateGeodeticList() {
     $("#StationCoordinatesGeodetic option").each(function () {
         var parts = $(this).text().split(' ');
         var nickname = parts[0].substring(0, 15);
-        $(this).text(nickname + ': ' + parts[1] + ' ' + parts[2] + ' ' + parts[3]).text;
+
+        if (parts.length >= 7) {
+            $(this).text(nickname + ': ' + parts[1] + ' ' + parts[2] + ' ' + parts[3]
+                + ' ' + parts[4] + ' ' + parts[5] + ' ' + parts[6]
+                + ' ' + parts[7]).text;
+        }
+        else {
+            $(this).text(nickname + ': ' + parts[1] + ' ' + parts[2] + ' ' + parts[3]).text;
+        }
+
     });
 }
 
@@ -1266,6 +1449,40 @@ function getFileList() {
     }
     else {
         showingFileList = false;
+    }
+}
+
+function getMessageList() {
+    if (obtainedMessageList == false) {
+        obtainedMessageList = true;
+
+        ge("messageList").innerHTML = "";
+        messageText = "";
+
+        xmlhttp = new XMLHttpRequest();
+        xmlhttp.open("GET", "/listMessages", false);
+        xmlhttp.send();
+
+        parseIncoming(xmlhttp.responseText); //Process CSV data into HTML
+
+        ge("messageList").innerHTML += messageText;
+    }
+}
+
+function getMessageListBase() {
+    if (obtainedMessageListBase == false) {
+        obtainedMessageListBase = true;
+
+        ge("messageListBase").innerHTML = "";
+        messageText = "";
+
+        xmlhttp = new XMLHttpRequest();
+        xmlhttp.open("GET", "/listMessagesBase", false);
+        xmlhttp.send();
+
+        parseIncoming(xmlhttp.responseText); //Process CSV data into HTML
+
+        ge("messageListBase").innerHTML += messageText;
     }
 }
 
@@ -1356,6 +1573,25 @@ function tcpBoxes() {
     else {
         hide("tcpSettingsConfig");
         ge("wifiTcpPort").value = 2947;
+    }
+}
+
+function tcpBoxesEthernet() {
+    if (ge("enableTcpClientEthernet").checked) {
+        show("tcpSettingsConfigEthernet");
+    }
+    else {
+        hide("tcpSettingsConfigEthernet");
+        //ge("ethernetTcpPort").value = 2947;
+    }
+}
+
+function dhcpEthernet() {
+    if (ge("ethernetDHCP").checked) {
+        hide("fixedIPSettingsConfigEthernet");
+    }
+    else {
+        show("fixedIPSettingsConfigEthernet");
     }
 }
 
@@ -1478,4 +1714,256 @@ function otaFirmwareStatus(percentComplete) {
     if (percentComplete == 100) {
         resetComplete();
     }
+}
+
+//Given a user's string, try to identify the type and return the coordinate in DD.ddddddddd format
+function identifyInputType(userEntry) {
+    var coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN;
+    var dashCount = 0;
+    var spaceCount = 0;
+    var decimalCount = 0;
+    var lengthOfLeadingNumber = 0;
+    convertedCoordinate = 0.0; //Clear what is given to us
+
+    //Scan entry for invalid chars
+    //A valid entry has only numbers, -, ' ', and .
+    for (var x = 0; x < userEntry.length; x++) {
+
+        if (isdigit(userEntry[x])) {
+            if (decimalCount == 0) lengthOfLeadingNumber++
+        }
+        else if (userEntry[x] == '-') dashCount++; //All good
+        else if (userEntry[x] == ' ') spaceCount++; //All good
+        else if (userEntry[x] == '.') decimalCount++; //All good
+        else return (CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN); //String contains invalid character
+    }
+
+    // Seven possible entry types
+    // DD.dddddd
+    // DDMM.mmmmmmm
+    // DD MM.mmmmmmm
+    // DD-MM.mmmmmmm
+    // DDMMSS.ssssss
+    // DD MM SS.ssssss
+    // DD-MM-SS.ssssss
+
+    if (decimalCount > 1) return (CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN); //Just no. 40.09033470 is valid.
+    if (spaceCount > 2) return (CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN); //Only 0, 1, or 2 allowed. 40 05 25.2049 is valid.
+    if (dashCount > 3) return (CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN); //Only 0, 1, 2, or 3 allowed. -105-11-05.1629 is valid.
+    if (lengthOfLeadingNumber > 7) return (CoordinateTypes.COORDINATE_INPUT_TYPE_INVALID_UNKNOWN); //Only 7 or fewer. -1051105.188992 (DDDMMSS or DDMMSS) is valid
+
+    var negativeSign = false;
+    if (userEntry[0] == '-') {
+        userEntry = setCharAt(userEntry, 0, ''); //Remove leading space
+        negativeSign = true;
+        dashCount--; //Use dashCount as the internal dashes only, not the leading negative sign
+    }
+
+    if (spaceCount == 0 && dashCount == 0 && (lengthOfLeadingNumber == 7 || lengthOfLeadingNumber == 6)) //DDMMSS.ssssss
+    {
+        coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS;
+
+        var intPortion = Math.trunc(Number(userEntry)); //Get DDDMMSS
+        var decimal = Math.trunc(intPortion / 10000); //Get DDD
+        intPortion -= (decimal * 10000);
+        var minutes = Math.trunc(intPortion / 100); //Get MM
+
+        //Find '.'
+        if (userEntry.indexOf('.') == -1)
+            coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS_NO_DECIMAL;
+
+        var seconds = userEntry; //Get DDDMMSS.ssssss
+        seconds -= (decimal * 10000); //Remove DDD
+        seconds -= (minutes * 100); //Remove MM
+        convertedCoordinate = decimal + (minutes / 60.0) + (seconds / 3600.0);
+        if (convertedCoordinate) convertedCoordinate *= -1;
+    }
+    else if (spaceCount == 0 && dashCount == 0 && (lengthOfLeadingNumber == 5 || lengthOfLeadingNumber == 4)) //DDMM.mmmmmmm
+    {
+        coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DDMM;
+
+        var intPortion = Math.trunc(userEntry); //Get DDDMM
+        var decimal = intPortion / 100; //Get DDD
+        intPortion -= (decimal * 100);
+        var minutes = userEntry; //Get DDDMM.mmmmmmm
+        minutes -= (decimal * 100); //Remove DDD
+        convertedCoordinate = decimal + (minutes / 60.0);
+        if (negativeSign) convertedCoordinate *= -1;
+    }
+
+    else if (dashCount == 1) //DD-MM.mmmmmmm
+    {
+        coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_DASH;
+
+        var data = userEntry.split('-');
+        var decimal = Number(data[0]); //Get DD
+        var minutes = Number(data[1]); //Get MM.mmmmmmm
+        convertedCoordinate = decimal + (minutes / 60.0);
+        if (negativeSign) convertedCoordinate *= -1;
+    }
+    else if (dashCount == 2) //DD-MM-SS.ssss
+    {
+        coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_DASH;
+
+        var data = userEntry.split('-');
+        var decimal = Number(data[0]); //Get DD
+        var minutes = Number(data[1]); //Get MM
+
+        //Find '.'
+        if (userEntry.indexOf('.') == -1)
+            coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_DASH_NO_DECIMAL;
+
+        var seconds = Number(data[2]); //Get SS.ssssss
+        convertedCoordinate = decimal + (minutes / 60.0) + (seconds / 3600.0);
+        if (negativeSign) convertedCoordinate *= -1;
+    }
+    else if (spaceCount == 0) //DD.ddddddddd
+    {
+        coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD;
+        convertedCoordinate = userEntry;
+        if (negativeSign) convertedCoordinate *= -1;
+    }
+    else if (spaceCount == 1) //DD MM.mmmmmmm
+    {
+        coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM;
+
+        var data = userEntry.split(' ');
+        var decimal = Number(data[0]); //Get DD
+        var minutes = Number(data[1]); //Get MM.mmmmmmm
+        convertedCoordinate = decimal + (minutes / 60.0);
+        if (negativeSign) convertedCoordinate *= -1;
+    }
+    else if (spaceCount == 2) //DD MM SS.ssssss
+    {
+        coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS;
+
+        var data = userEntry.split(' ');
+        var decimal = Number(data[0]); //Get DD
+        var minutes = Number(data[1]); //Get MM
+
+        //Find '.'
+        if (userEntry.indexOf('.') == -1)
+            coordinateInputType = CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_NO_DECIMAL;
+
+        var seconds = Number(data[2]); //Get SS.ssssss
+        convertedCoordinate = decimal + (minutes / 60.0) + (seconds / 3600.0);
+        if (negativeSign) convertedCoordinate *= -1;
+    }
+
+    //console.log("convertedCoordinate: " + convertedCoordinate.toFixed(9));
+    return (coordinateInputType);
+}
+
+//Given a coordinate and input type, output a string
+//So DD.ddddddddd can become 'DD MM SS.ssssss', etc
+function convertInput(coordinate, coordinateInputType) {
+    var coordinateString = "";
+
+    if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD) {
+        coordinate = Number(coordinate).toFixed(9);
+        return (coordinate);
+    }
+    else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DDMM
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_DASH
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SYMBOL
+    ) {
+        var longitudeDegrees = Math.trunc(coordinate);
+        coordinate -= longitudeDegrees;
+        coordinate *= 60;
+        if (coordinate < 1)
+            coordinate *= -1;
+
+        coordinate = coordinate.toFixed(7);
+
+        if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DDMM)
+            coordinateString = longitudeDegrees + "" + coordinate;
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_DASH)
+            coordinateString = longitudeDegrees + "-" + coordinate;
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SYMBOL)
+            coordinateString = longitudeDegrees + "°" + coordinate + "'";
+        else
+            coordinateString = longitudeDegrees + " " + coordinate;
+    }
+    else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_DASH
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_SYMBOL
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS_NO_DECIMAL
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_NO_DECIMAL
+        || coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_DASH_NO_DECIMAL
+    ) {
+        var longitudeDegrees = Math.trunc(coordinate);
+        coordinate -= longitudeDegrees;
+        coordinate *= 60;
+        if (coordinate < 1)
+            coordinate *= -1;
+
+        var longitudeMinutes = Math.trunc(coordinate);
+        coordinate -= longitudeMinutes;
+        coordinate *= 60;
+
+        coordinate = coordinate.toFixed(6);
+
+        if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS)
+            coordinateString = longitudeDegrees + "" + longitudeMinutes + "" + coordinate;
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_DASH)
+            coordinateString = longitudeDegrees + "-" + longitudeMinutes + "-" + coordinate;
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_SYMBOL)
+            coordinateString = longitudeDegrees + "°" + longitudeMinutes + "'" + coordinate + "\"";
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS)
+            coordinateString = longitudeDegrees + " " + longitudeMinutes + " " + coordinate;
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS_NO_DECIMAL)
+            coordinateString = longitudeDegrees + "" + longitudeMinutes + "" + Math.round(coordinate);
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_NO_DECIMAL)
+            coordinateString = longitudeDegrees + " " + longitudeMinutes + " " + Math.round(coordinate);
+        else if (coordinateInputType == CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_DASH_NO_DECIMAL)
+            coordinateString = longitudeDegrees + "-" + longitudeMinutes + "-" + Math.round(coordinate);
+    }
+
+    return (coordinateString);
+}
+
+function isdigit(c) { return /\d/.test(c); }
+
+function setCharAt(str, index, chr) {
+    if (index > str.length - 1) return str;
+    return str.substring(0, index) + chr + str.substring(index + 1);
+}
+
+//Given an input type, return a printable string
+function printableInputType(coordinateInputType) {
+    switch (coordinateInputType) {
+        default:
+            return ("Unknown");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DD):
+            return ("DD.ddddddddd");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DDMM):
+            return ("DDMM.mmmmmmm");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM):
+            return ("DD MM.mmmmmmm");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_DASH):
+            return ("DD-MM.mmmmmmm");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS):
+            return ("DDMMSS.ssssss");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS):
+            return ("DD MM SS.ssssss");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DDMMSS_NO_DECIMAL):
+            return ("DDMMSS");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_NO_DECIMAL):
+            return ("DD MM SS");
+            break;
+        case (CoordinateTypes.COORDINATE_INPUT_TYPE_DD_MM_SS_DASH_NO_DECIMAL):
+            return ("DD-MM-SS");
+            break;
+    }
+    return ("Unknown");
 }

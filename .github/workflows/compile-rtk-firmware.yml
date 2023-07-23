@@ -6,7 +6,7 @@ on:
 env:
   FILENAME_PREFIX: RTK_Surveyor_Firmware
   FIRMWARE_VERSION_MAJOR: 3
-  FIRMWARE_VERSION_MINOR: 2
+  FIRMWARE_VERSION_MINOR: 5
   POINTPERFECT_TOKEN: ${{ secrets.POINTPERFECT_TOKEN }}
 
 jobs:
@@ -18,6 +18,37 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@master
+
+      - name: Get current date
+        id: date
+        run: echo "date=$(date +'%b_%d_%Y')" >> $GITHUB_OUTPUT
+
+      - name: Get current date
+        id: dateNoScores
+        run: echo "dateNoScores=$(date +'%b %d %Y')" >> $GITHUB_OUTPUT
+
+      - name: Extract branch name
+        run: echo "BRANCH=${{github.ref_name}}" >> $GITHUB_ENV
+
+      #File_Name_v3_1.bin
+      #File_Name_RC-Jan_26_2023.bin
+      - name: Create file ending and compiler flags based on branch
+        run: |
+          if [[ $BRANCH == 'main' ]]; then
+              echo "FILE_ENDING_UNDERSCORE=_v${{ env.FIRMWARE_VERSION_MAJOR }}_${{ env.FIRMWARE_VERSION_MINOR }}" >> "$GITHUB_ENV"
+              echo "FILE_ENDING_NOUNDERSCORE=_v${{ env.FIRMWARE_VERSION_MAJOR }}.${{ env.FIRMWARE_VERSION_MINOR }}" >> "$GITHUB_ENV"
+              echo "JSON_ENDING=" >> "$GITHUB_ENV"
+              echo "JSON_FILE_NAME=RTK-Firmware.json" >> "$GITHUB_ENV"
+              echo "ENABLE_DEVELOPER=false" >> "$GITHUB_ENV"
+              echo "DEBUG_LEVEL=none" >> "$GITHUB_ENV"
+          else
+              echo "FILE_ENDING_UNDERSCORE=_RC-${{ steps.date.outputs.date }}" >> "$GITHUB_ENV"
+              echo "FILE_ENDING_NOUNDERSCORE=_RC-${{ steps.dateNoScores.outputs.dateNoScores }}" >> "$GITHUB_ENV"
+              echo "JSON_ENDING=-${{ steps.dateNoScores.outputs.dateNoScores }}" >> "$GITHUB_ENV"
+              echo "JSON_FILE_NAME=RTK-RC-Firmware.json" >> "$GITHUB_ENV"
+              echo "ENABLE_DEVELOPER=true" >> "$GITHUB_ENV"
+              echo "DEBUG_LEVEL=debug" >> "$GITHUB_ENV"
+          fi
 
       - name: Setup Arduino CLI
         uses: arduino/setup-arduino-cli@v1
@@ -34,16 +65,18 @@ jobs:
 
       - name: Get Known Libraries
         run: arduino-cli lib install
-          ESP32Time@2.0.0
-          JC_Button@2.1.2
-          sdFat@2.1.1
           ArduinoJson@6.19.4
-          pubsubclient@2.8.0
+          ESP32Time@2.0.0
           ESP32_BleSerial@1.0.4
-          "SparkFun u-blox GNSS v3"@3.0.2
-          "SparkFun MAX1704x Fuel Gauge Arduino Library"@1.0.4
-          "SparkFun LIS2DH12 Arduino Library"@1.0.3
           "ESP32-OTA-Pull"@1.0.0
+          Ethernet@2.0.2
+          JC_Button@2.1.2
+          PubSubClient@2.8.0
+          "SdFat"@2.1.1
+          "SparkFun LIS2DH12 Arduino Library"@1.0.3
+          "SparkFun MAX1704x Fuel Gauge Arduino Library"@1.0.4
+          "SparkFun u-blox GNSS v3"@3.0.14
+          SparkFun_WebServer_ESP32_W5500@1.5.5
 
       - name: Enable external libs
         run: arduino-cli config set library.enable_unsafe_install true
@@ -60,39 +93,51 @@ jobs:
       #    cd Firmware/RTK_Surveyor/Patch/
       #    cp WiFiGeneric.cpp /home/runner/.arduino15/packages/esp32/hardware/esp32/2.0.2/libraries/WiFi/src/WiFiGeneric.cpp
 
-      - name: Compile Sketch
-        run: arduino-cli compile --fqbn esp32:esp32:esp32 ./Firmware/RTK_Surveyor/RTK_Surveyor.ino
-          --build-property build.partitions=partitions
-          --build-property upload.maximum_size=3145728 
-          --build-property "compiler.cpp.extra_flags=\"-DPOINTPERFECT_TOKEN=$POINTPERFECT_TOKEN\" \"-DFIRMWARE_VERSION_MAJOR=$FIRMWARE_VERSION_MAJOR\" \"-DFIRMWARE_VERSION_MINOR=$FIRMWARE_VERSION_MINOR\""
-          --export-binaries
-
-      - name: Get current date
-        id: date
-        run: echo "date=$(date +'%b_%d_%Y')" >> $GITHUB_OUTPUT
-
-      - name: Get current date
-        id: dateNoScores
-        run: echo "dateNoScores=$(date +'%b %d %Y')" >> $GITHUB_OUTPUT
-
-      - name: Extract branch name
-        run: echo "BRANCH=${{github.ref_name}}" >> $GITHUB_ENV
-
-      #File_Name_v3_1.bin
-      #File_Name_RC-Jan_26_2023.bin
-      - name: Create file ending based on branch
+      #Patch Server.h to avoid https://github.com/arduino-libraries/Ethernet/issues/88#issuecomment-455498941
+      #Note: this patch can be removed if/when we upgrade to ESP32 core >= v2.0.6 
+      - name: Patch ESP32 Server.h for Ethernet
         run: |
-          if [[ $BRANCH == 'main' ]]; then
-              echo "FILE_ENDING_UNDERSCORE=_v${{ env.FIRMWARE_VERSION_MAJOR }}_${{ env.FIRMWARE_VERSION_MINOR }}" >> "$GITHUB_ENV"
-              echo "FILE_ENDING_NOUNDERSCORE=_v${{ env.FIRMWARE_VERSION_MAJOR }}.${{ env.FIRMWARE_VERSION_MINOR }}" >> "$GITHUB_ENV"
-              echo "JSON_ENDING=" >> "$GITHUB_ENV"
-              echo "JSON_FILE_NAME=RTK-Firmware.json" >> "$GITHUB_ENV"
-          else
-              echo "FILE_ENDING_UNDERSCORE=_RC-${{ steps.date.outputs.date }}" >> "$GITHUB_ENV"
-              echo "FILE_ENDING_NOUNDERSCORE=_RC-${{ steps.dateNoScores.outputs.dateNoScores }}" >> "$GITHUB_ENV"
-              echo "JSON_ENDING=-${{ steps.dateNoScores.outputs.dateNoScores }}" >> "$GITHUB_ENV"
-              echo "JSON_FILE_NAME=RTK-RC-Firmware.json" >> "$GITHUB_ENV"
-          fi
+          cd Firmware/RTK_Surveyor/Patch/
+          cp Server.h /home/runner/.arduino15/packages/esp32/hardware/esp32/2.0.2/cores/esp32/Server.h
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      # Configure Python - now we have Python installed, we need to provide everything needed by esptool otherwise the compile fails
+      - name: Configure Python
+        run: |
+          pip3 install pyserial
+
+      - name: Update index_html
+        run: |
+          cd Firmware/Tools
+          python index_html_zipper.py ../RTK_Surveyor/AP-Config/index.html ../RTK_Surveyor/form.h
+
+      - name: Update main_js
+        run: |
+          cd Firmware/Tools
+          python main_js_zipper.py ../RTK_Surveyor/AP-Config/src/main.js ../RTK_Surveyor/form.h
+
+      - name: Commit and push form.h
+        uses: actions-js/push@master
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          directory: ./Firmware/RTK_Surveyor
+          branch: ${{ env.BRANCH }}
+          message: 'Update form.h via Python'
+
+      - name: Copy custom app3M_fat9M_16MB.csv
+        run:
+          cp Firmware/app3M_fat9M_16MB.csv /home/runner/.arduino15/packages/esp32/hardware/esp32/2.0.2/tools/partitions/app3M_fat9M_16MB.csv
+
+      - name: Compile Sketch
+        run: arduino-cli compile --fqbn "esp32:esp32:esp32":DebugLevel=${{ env.DEBUG_LEVEL }} ./Firmware/RTK_Surveyor/RTK_Surveyor.ino
+          --build-property build.partitions=app3M_fat9M_16MB
+          --build-property upload.maximum_size=3145728 
+          --build-property "compiler.cpp.extra_flags=\"-DPOINTPERFECT_TOKEN=$POINTPERFECT_TOKEN\" \"-DFIRMWARE_VERSION_MAJOR=$FIRMWARE_VERSION_MAJOR\" \"-DFIRMWARE_VERSION_MINOR=$FIRMWARE_VERSION_MINOR\" \"-DENABLE_DEVELOPER=${{ env.ENABLE_DEVELOPER }}\""
+          --export-binaries
 
       - name: Rename binary
         run: |
@@ -105,8 +150,10 @@ jobs:
           name: ${{ env.FILENAME_PREFIX }}${{ env.FILE_ENDING_UNDERSCORE }}
           path: ./Firmware/RTK_Surveyor/build/esp32.esp32.esp32/${{ env.FILENAME_PREFIX }}${{ env.FILE_ENDING_UNDERSCORE }}.bin
 
+      
       - name: Push binary to Binaries Repo
-        uses: dmnemec/copy_file_to_another_repo_action@main
+        # uses: dmnemec/copy_file_to_another_repo_action #Workaround for Issue: https://github.com/orgs/community/discussions/55820#discussioncomment-5946136
+        uses: Jason2866/copy_file_to_another_repo_action@http408_fix
         env:
           API_TOKEN_GITHUB: ${{ secrets.API_GITHUB_RTK_FILE_TOKEN }}
         with:
@@ -126,7 +173,8 @@ jobs:
             {"Configurations": [{"Version":"${{ env.FIRMWARE_VERSION_MAJOR }}.${{ env.FIRMWARE_VERSION_MINOR }}${{ env.JSON_ENDING }}", "URL":"https://raw.githubusercontent.com/sparkfun/SparkFun_RTK_Firmware_Binaries/main/${{ env.FILENAME_PREFIX }}${{ env.FILE_ENDING_UNDERSCORE }}.bin"}]}
 
       - name: Push JSON to Binaries Repo
-        uses: dmnemec/copy_file_to_another_repo_action@main
+        # uses: dmnemec/copy_file_to_another_repo_action #Workaround for Issue: https://github.com/orgs/community/discussions/55820#discussioncomment-5946136
+        uses: Jason2866/copy_file_to_another_repo_action@http408_fix
         env:
           API_TOKEN_GITHUB: ${{ secrets.API_GITHUB_RTK_FILE_TOKEN }}
         with:
