@@ -1,39 +1,101 @@
-// Initial startup functions for GNSS, SD, display, radio, etc
+/*------------------------------------------------------------------------------
+Begin.ino
 
+  This module implements the initial startup functions for GNSS, SD, display,
+  radio, etc.
+------------------------------------------------------------------------------*/
+
+//----------------------------------------
+// Constants
+//----------------------------------------
+
+#define MAX_ADC_VOLTAGE     3300    // Millivolts
+
+// Testing shows the combined ADC+resistors is under a 1% window
+#define TOLERANCE           4.75    // Percent:  95.25% - 104.75%
+
+//----------------------------------------
+// Hardware initialization functions
+//----------------------------------------
+
+//                                ADC input
+//                       Ra KOhms     |     Rb KOhms
+//  MAX_ADC_VOLTAGE -----/\/\/\/\-----+-----/\/\/\/\----- Ground
+//
+
+// Determine if the measured value matches the product ID value
+bool idWithAdc(uint16_t mvMeasured, float resVcc, float resGnd)
+{
+    uint16_t lowerThreshold;
+    float raK;
+    float rbK;
+    uint16_t upperThreshold;
+    float voltage;
+
+    // Compute the upper threshold
+    raK = resVcc * (1.0 - (TOLERANCE / 100.));
+    rbK = resGnd * (1.0 + (TOLERANCE / 100.));
+    voltage = MAX_ADC_VOLTAGE * rbK / (raK + rbK);
+    upperThreshold = (int)ceil(voltage);
+
+    // Compute the lower threshold
+    raK = (double)resVcc * (1.0 + (TOLERANCE / 100.));
+    rbK = (double)resGnd * (1.0 - (TOLERANCE / 100.));
+    voltage = MAX_ADC_VOLTAGE * rbK / (raK + rbK);
+    lowerThreshold = (int)floor(voltage);
+
+    // Return true if the mvMeasured value is within the tolerance range
+    // of the mvProduct value
+    return (upperThreshold > mvMeasured) && (mvMeasured > lowerThreshold);
+}
+
+// Use a pair of resistors on pin 35 to ID the board type
+// If the ID resistors are not available then use a variety of other methods
+// (I2C, GPIO test, etc) to ID the board.
+// Assume no hardware interfaces have been started so we need to start/stop any hardware
+// used in tests accordingly.
 void identifyBoard()
 {
-    // Use ADC to check resistor divider
-    int pin_adc_rtk_facet = 35;
-    uint16_t idValue = analogReadMilliVolts(pin_adc_rtk_facet);
-    log_d("Board ADC ID: %d", idValue);
+    // Use ADC to check the resistor divider
+    int pin_deviceID = 35;
+    uint16_t idValue = analogReadMilliVolts(pin_deviceID);
+    log_d("Board ADC ID (mV): %d", idValue);
 
-    if (idValue > (3300 / 2 * 0.9) && idValue < (3300 / 2 * 1.1))
-    {
-        productVariant = RTK_FACET;
-    }
-    else if (idValue > (3300 * 2 / 3 * 0.9) && idValue < (3300 * 2 / 3 * 1.1))
-    {
-        productVariant = RTK_FACET_LBAND;
-    }
-    else if (idValue > (3300 * 3.3 / 13.3 * 0.9) && idValue < (3300 * 3.3 / 13.3 * 1.1))
-    {
+    // Order checks by millivolt values high to low
+
+    // Facet L-Band Direct: 4.7/1  -->  534mV < 578mV < 626mV
+    if (idWithAdc(idValue, 4.7, 1))
+        productVariant = RTK_FACET_LBAND_DIRECT;
+
+    // Express: 10/3.3  -->  761mV < 818mV < 879mV
+    else if (idWithAdc(idValue, 10, 3.3))
         productVariant = RTK_EXPRESS;
-    }
-    else if (idValue > (3300 * 10 / 13.3 * 0.9) && idValue < (3300 * 10 / 13.3 * 1.1))
-    {
-        productVariant = RTK_EXPRESS_PLUS;
-    }
-    else if (idValue > (3300 * 1 / 3 * 0.9) && idValue < (3300 * 1 / 3 * 1.1))
+
+    // Reference Station: 20/10  -->  1031mV < 1100mV < 1171mV
+    else if (idWithAdc(idValue, 20, 10))
     {
         productVariant = REFERENCE_STATION;
         // We can't auto-detect the ZED version if the firmware is in configViaEthernet mode,
         // so fake it here - otherwise messageSupported always returns false
         zedFirmwareVersionInt = 112;
     }
+    // Facet: 10/10  -->  1571mV < 1650mV < 1729mV
+    else if (idWithAdc(idValue, 10, 10))
+        productVariant = RTK_FACET;
+
+    // Facet L-Band: 10/20  -->  2129mV < 2200mV < 2269mV
+    else if (idWithAdc(idValue, 10, 20))
+        productVariant = RTK_FACET_LBAND;
+
+    // Express+: 3.3/10  -->  2421mV < 2481mV < 2539mV
+    else if (idWithAdc(idValue, 3.3, 10))
+        productVariant = RTK_EXPRESS_PLUS;
+
+    // ID resistors do not exist for the following:
+    //      Surveyor
+    //      Unknown
     else
-    {
         productVariant = RTK_UNKNOWN; // Need to wait until the GNSS and Accel have been initialized
-    }
 }
 
 // Setup any essential power pins
@@ -112,7 +174,21 @@ void beginBoard()
         }
         else
         {
-            productVariant = RTK_SURVEYOR;
+            // Detect RTK Expresses (v1.3 and below) that do not have an accel or device ID resistors
+
+            // On a Surveyor, pin 34 is not connected. On Express, 34 is connected to ZED_TX_READY
+            const int pin_ZedTxReady = 34;
+            uint16_t pinValue = analogReadMilliVolts(pin_ZedTxReady);
+            log_d("Alternate ID pinValue (mV): %d\r\n", pinValue); // Surveyor = 142 to 152, //Express = 3129
+            if (pinValue > 3000)
+            {
+                if (zedModuleType == PLATFORM_F9P)
+                    productVariant = RTK_EXPRESS;
+                else if (zedModuleType == PLATFORM_F9R)
+                    productVariant = RTK_EXPRESS_PLUS;
+            }
+            else
+                productVariant = RTK_SURVEYOR;
         }
     }
 
@@ -135,9 +211,6 @@ void beginBoard()
         // Bug in ZED-F9P v1.13 firmware causes RTK LED to not light when RTK Floating with SBAS on.
         // The following changes the POR default but will be overwritten by settings in NVM or settings file
         settings.ubxConstellations[1].enabled = false;
-
-        strncpy(platformFilePrefix, "SFE_Surveyor", sizeof(platformFilePrefix) - 1);
-        strncpy(platformPrefix, "Surveyor", sizeof(platformPrefix) - 1);
     }
     else if (productVariant == RTK_EXPRESS || productVariant == RTK_EXPRESS_PLUS)
     {
@@ -161,19 +234,9 @@ void beginBoard()
         pinMode(pin_setupButton, INPUT_PULLUP);
 
         setMuxport(settings.dataPortChannel); // Set mux to user's choice: NMEA, I2C, PPS, or DAC
-
-        if (productVariant == RTK_EXPRESS)
-        {
-            strncpy(platformFilePrefix, "SFE_Express", sizeof(platformFilePrefix) - 1);
-            strncpy(platformPrefix, "Express", sizeof(platformPrefix) - 1);
-        }
-        else if (productVariant == RTK_EXPRESS_PLUS)
-        {
-            strncpy(platformFilePrefix, "SFE_Express_Plus", sizeof(platformFilePrefix) - 1);
-            strncpy(platformPrefix, "Express Plus", sizeof(platformPrefix) - 1);
-        }
     }
-    else if (productVariant == RTK_FACET || productVariant == RTK_FACET_LBAND)
+    else if (productVariant == RTK_FACET || productVariant == RTK_FACET_LBAND ||
+             productVariant == RTK_FACET_LBAND_DIRECT)
     {
         // v11
         pin_muxA = 2;
@@ -209,15 +272,11 @@ void beginBoard()
         pinMode(pin_radio_cts, OUTPUT);
         digitalWrite(pin_radio_cts, LOW);
 
-        if (productVariant == RTK_FACET)
+        if (productVariant == RTK_FACET_LBAND_DIRECT)
         {
-            strncpy(platformFilePrefix, "SFE_Facet", sizeof(platformFilePrefix) - 1);
-            strncpy(platformPrefix, "Facet", sizeof(platformPrefix) - 1);
-        }
-        else if (productVariant == RTK_FACET_LBAND)
-        {
-            strncpy(platformFilePrefix, "SFE_Facet_LBand", sizeof(platformFilePrefix) - 1);
-            strncpy(platformPrefix, "Facet L-Band", sizeof(platformPrefix) - 1);
+            // Override the default setting if a user has not explicitly configured the setting
+            if (settings.useI2cForLbandCorrectionsConfigured == false)
+                settings.useI2cForLbandCorrections = false;
         }
     }
     else if (productVariant == REFERENCE_STATION)
@@ -225,9 +284,6 @@ void beginBoard()
         // No powerOnCheck
 
         settings.enablePrintBatteryMessages = false; // No pesky battery messages
-
-        strncpy(platformFilePrefix, "SFE_Reference_Station", sizeof(platformFilePrefix) - 1);
-        strncpy(platformPrefix, "Reference Station", sizeof(platformPrefix) - 1);
     }
 
     char versionString[21];
@@ -446,13 +502,13 @@ void beginSD()
                 }
             }
         }
-#else   // COMPILE_SD_MMC
+#else  // COMPILE_SD_MMC
         else
         {
             log_d("SD_MMC not compiled");
             break; // No SD available.
         }
-#endif  // COMPILE_SD_MMC
+#endif // COMPILE_SD_MMC
 
         if (createTestFile() == false)
         {
@@ -491,7 +547,7 @@ void endSD(bool alreadyHaveSemaphore, bool releaseSemaphore)
 #ifdef COMPILE_SD_MMC
         else
             SD_MMC.end();
-#endif  // COMPILE_SD_MMC
+#endif // COMPILE_SD_MMC
 
         online.microSD = false;
         systemPrintln("microSD: Offline");
@@ -549,20 +605,38 @@ void resetSPI()
 // See issue: https://github.com/espressif/arduino-esp32/issues/3386
 void beginUART2()
 {
-    ringBuffer = (uint8_t *)malloc(settings.gnssHandlerBufferSize);
+    size_t length;
 
-    if (pinUART2TaskHandle == nullptr)
-        xTaskCreatePinnedToCore(
-            pinUART2Task,
-            "UARTStart", // Just for humans
-            2000,        // Stack Size
-            nullptr,     // Task input parameter
-            0,           // Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest
-            &pinUART2TaskHandle,              // Task handle
-            settings.gnssUartInterruptsCore); // Core where task should run, 0=core, 1=Arduino
+    // Determine the length of data to be retained in the ring buffer
+    // after discarding the oldest data
+    length = settings.gnssHandlerBufferSize;
+    rbOffsetEntries = (length >> 1) / AVERAGE_SENTENCE_LENGTH_IN_BYTES;
+    length = settings.gnssHandlerBufferSize
+           + (rbOffsetEntries * sizeof(RING_BUFFER_OFFSET));
+    ringBuffer = nullptr;
+    rbOffsetArray = (RING_BUFFER_OFFSET *)malloc(length);
+    if (!rbOffsetArray)
+    {
+        rbOffsetEntries = 0;
+        systemPrintln("ERROR: Failed to allocate the ring buffer!");
+    }
+    else
+    {
+        ringBuffer = (uint8_t *)&rbOffsetArray[rbOffsetEntries];
+        rbOffsetArray[0] = 0;
+        if (pinUART2TaskHandle == nullptr)
+            xTaskCreatePinnedToCore(
+                pinUART2Task,
+                "UARTStart", // Just for humans
+                2000,        // Stack Size
+                nullptr,     // Task input parameter
+                0,           // Priority, with 3 (configMAX_PRIORITIES - 1) being the highest, and 0 being the lowest
+                &pinUART2TaskHandle,              // Task handle
+                settings.gnssUartInterruptsCore); // Core where task should run, 0=core, 1=Arduino
 
-    while (uart2pinned == false) // Wait for task to run once
-        delay(1);
+        while (uart2pinned == false) // Wait for task to run once
+            delay(1);
+    }
 }
 
 // Assign UART2 interrupts to the core that started the task. See:
@@ -877,7 +951,7 @@ void beginInterrupts()
         pinMode(pin_Ethernet_Interrupt, INPUT_PULLUP);                 // Prepare the interrupt pin
         attachInterrupt(pin_Ethernet_Interrupt, ethernetISR, FALLING); // Attach the interrupt
     }
-#endif  // COMPILE_ETHERNET
+#endif // COMPILE_ETHERNET
 }
 
 // Set LEDs for output and configure PWM
@@ -981,7 +1055,7 @@ void beginSystemState()
     if (systemState > STATE_NOT_SET)
     {
         systemPrintln("Unknown state - factory reset");
-        factoryReset(false); //We do not have the SD semaphore
+        factoryReset(false); // We do not have the SD semaphore
     }
 
     if (productVariant == RTK_SURVEYOR)
@@ -1002,6 +1076,7 @@ void beginSystemState()
         systemState = STATE_ROVER_NOT_STARTED; // Assume Rover. ButtonCheckTask() will correct as needed.
 
         setupBtn = new Button(pin_setupButton); // Create the button in memory
+        // Allocation failure handled in ButtonCheckTask
     }
     else if (productVariant == RTK_EXPRESS || productVariant == RTK_EXPRESS_PLUS)
     {
@@ -1020,8 +1095,10 @@ void beginSystemState()
 
         setupBtn = new Button(pin_setupButton);          // Create the button in memory
         powerBtn = new Button(pin_powerSenseAndControl); // Create the button in memory
+        // Allocation failures handled in ButtonCheckTask
     }
-    else if (productVariant == RTK_FACET || productVariant == RTK_FACET_LBAND)
+    else if (productVariant == RTK_FACET || productVariant == RTK_FACET_LBAND ||
+             productVariant == RTK_FACET_LBAND_DIRECT)
     {
         if (settings.lastState == STATE_NOT_SET) // Default
         {
@@ -1041,6 +1118,7 @@ void beginSystemState()
             firstRoverStart = false;
 
         powerBtn = new Button(pin_powerSenseAndControl); // Create the button in memory
+        // Allocation failure handled in ButtonCheckTask
     }
     else if (productVariant == REFERENCE_STATION)
     {
@@ -1055,6 +1133,7 @@ void beginSystemState()
                 .lastState; // Return to either NTP, Base or Rover Not Started. The last state previous to power down.
 
         setupBtn = new Button(pin_setupButton); // Create the button in memory
+        // Allocation failure handled in ButtonCheckTask
     }
 
     // Starts task for monitoring button presses
@@ -1169,25 +1248,77 @@ void beginI2C()
 // Assign I2C interrupts to the core that started the task. See: https://github.com/espressif/arduino-esp32/issues/3386
 void pinI2CTask(void *pvParameters)
 {
+    bool i2cBusAvailable;
+    uint32_t timer;
+
     Wire.begin(); // Start I2C on core the core that was chosen when the task was started
     // Wire.setClock(400000);
 
-    // begin/end wire transmission to see if bus is responding correctly
-    // All good: 0ms, response 2
-    // SDA/SCL shorted: 1000ms timeout, response 5
-    // SCL/VCC shorted: 14ms, response 5
-    // SCL/GND shorted: 1000ms, response 5
-    // SDA/VCC shorted: 1000ms, reponse 5
-    // SDA/GND shorted: 14ms, response 5
-    Wire.beginTransmission(0x15); // Dummy address
-    int endValue = Wire.endTransmission();
-    if (endValue == 2)
-        online.i2c = true;
-    else
-        systemPrintln("Error: I2C Bus Not Responding");
+    // Display the device addresses
+    i2cBusAvailable = false;
+    for (uint8_t addr = 0; addr < 127; addr++)
+    {
+        // begin/end wire transmission to see if the bus is responding correctly
+        // All good: 0ms, response 2
+        // SDA/SCL shorted: 1000ms timeout, response 5
+        // SCL/VCC shorted: 14ms, response 5
+        // SCL/GND shorted: 1000ms, response 5
+        // SDA/VCC shorted: 1000ms, response 5
+        // SDA/GND shorted: 14ms, response 5
+        timer = millis();
+        Wire.beginTransmission(addr);
+        if (Wire.endTransmission() == 0)
+        {
+            i2cBusAvailable = true;
+            switch (addr)
+            {
+                default: {
+                    systemPrintf("0x%02x\r\n", addr);
+                    break;
+                }
 
+                case 0x19: {
+                    systemPrintf("0x%02x - LIS2DH12 Accelerometer\r\n", addr);
+                    break;
+                }
+
+                case 0x36: {
+                    systemPrintf("0x%02x - MAX17048 Fuel Gauge\r\n", addr);
+                    break;
+                }
+
+                case 0x3d: {
+                    systemPrintf("0x%02x - SSD1306 (64x48) OLED Driver\r\n", addr);
+                    break;
+                }
+
+                case 0x42: {
+                    systemPrintf("0x%02x - u-blox ZED-F9P GNSS Receiver\r\n", addr);
+                    break;
+                }
+
+                case 0x43: {
+                    systemPrintf("0x%02x - u-blox NEO-D9S-00B Correction Data Receiver\r\n", addr);
+                    break;
+                }
+
+                case 0x60: {
+                    systemPrintf("0x%02x - Crypto Coprocessor\r\n", addr);
+                    break;
+                }
+            }
+        }
+        else if ((millis() - timer) > 3)
+        {
+            systemPrintln("Error: I2C Bus Not Responding");
+            i2cBusAvailable = false;
+            break;
+        }
+    }
+
+    // Update the I2C status
+    online.i2c = i2cBusAvailable;
     i2cPinned = true;
-
     vTaskDelete(nullptr); // Delete task once it has run once
 }
 

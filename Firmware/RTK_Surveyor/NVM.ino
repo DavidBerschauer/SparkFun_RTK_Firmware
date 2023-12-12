@@ -200,7 +200,7 @@ void recordSystemSettingsToFile(File *settingsFile)
 
     settingsFile->printf("%s=%s\r\n", "zedUniqueId", zedUniqueId);
 
-    if (productVariant == RTK_FACET_LBAND)
+    if (productVariant == RTK_FACET_LBAND || productVariant == RTK_FACET_LBAND_DIRECT)
         settingsFile->printf("%s=%s\r\n", "neoFirmwareVersion", neoFirmwareVersion);
 
     settingsFile->printf("%s=%d\r\n", "printDebugMessages", settings.printDebugMessages);
@@ -259,6 +259,8 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%s\r\n", "ntripClient_MountPointPW", settings.ntripClient_MountPointPW);
     settingsFile->printf("%s=%d\r\n", "ntripClient_TransmitGGA", settings.ntripClient_TransmitGGA);
     settingsFile->printf("%s=%d\r\n", "serialTimeoutGNSS", settings.serialTimeoutGNSS);
+
+    // Point Perfect
     settingsFile->printf("%s=%s\r\n", "pointPerfectDeviceProfileToken", settings.pointPerfectDeviceProfileToken);
     settingsFile->printf("%s=%d\r\n", "enablePointPerfectCorrections", settings.enablePointPerfectCorrections);
     settingsFile->printf("%s=%d\r\n", "autoKeyRenewal", settings.autoKeyRenewal);
@@ -272,6 +274,8 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%llu\r\n", "pointPerfectNextKeyDuration", settings.pointPerfectNextKeyDuration);
     settingsFile->printf("%s=%llu\r\n", "pointPerfectNextKeyStart", settings.pointPerfectNextKeyStart);
     settingsFile->printf("%s=%llu\r\n", "lastKeyAttempt", settings.lastKeyAttempt);
+    settingsFile->printf("%s=%d\r\n", "debugPpCertificate", settings.debugPpCertificate);
+
     settingsFile->printf("%s=%d\r\n", "updateZEDSettings", settings.updateZEDSettings);
     settingsFile->printf("%s=%d\r\n", "LBandFreq", settings.LBandFreq);
     settingsFile->printf("%s=%d\r\n", "enableLogging", settings.enableLogging);
@@ -280,11 +284,10 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%d\r\n", "timeZoneHours", settings.timeZoneHours);
     settingsFile->printf("%s=%d\r\n", "timeZoneMinutes", settings.timeZoneMinutes);
     settingsFile->printf("%s=%d\r\n", "timeZoneSeconds", settings.timeZoneSeconds);
-    settingsFile->printf("%s=%d\r\n", "enablePrintWifiIpAddress", settings.enablePrintWifiIpAddress);
     settingsFile->printf("%s=%d\r\n", "enablePrintState", settings.enablePrintState);
-    settingsFile->printf("%s=%d\r\n", "enablePrintWifiState", settings.enablePrintWifiState);
-    settingsFile->printf("%s=%d\r\n", "enablePrintNtripClientState", settings.enablePrintNtripClientState);
-    settingsFile->printf("%s=%d\r\n", "enablePrintNtripServerState", settings.enablePrintNtripServerState);
+    settingsFile->printf("%s=%d\r\n", "debugWifiState", settings.debugWifiState);
+    settingsFile->printf("%s=%d\r\n", "debugNtripClientState", settings.debugNtripClientState);
+    settingsFile->printf("%s=%d\r\n", "debugNtripServerState", settings.debugNtripServerState);
     settingsFile->printf("%s=%d\r\n", "enablePrintPosition", settings.enablePrintPosition);
     settingsFile->printf("%s=%d\r\n", "enablePrintIdleTime", settings.enablePrintIdleTime);
     settingsFile->printf("%s=%d\r\n", "enableMarksFile", settings.enableMarksFile);
@@ -295,14 +298,20 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%d\r\n", "enablePrintLogFileMessages", settings.enablePrintLogFileMessages);
     settingsFile->printf("%s=%d\r\n", "enablePrintLogFileStatus", settings.enablePrintLogFileStatus);
     settingsFile->printf("%s=%d\r\n", "enablePrintRingBufferOffsets", settings.enablePrintRingBufferOffsets);
-    settingsFile->printf("%s=%d\r\n", "enablePrintNtripServerRtcm", settings.enablePrintNtripServerRtcm);
-    settingsFile->printf("%s=%d\r\n", "enablePrintNtripClientRtcm", settings.enablePrintNtripClientRtcm);
+    settingsFile->printf("%s=%d\r\n", "debugNtripServerRtcm", settings.debugNtripServerRtcm);
+    settingsFile->printf("%s=%d\r\n", "debugNtripClientRtcm", settings.debugNtripClientRtcm);
     settingsFile->printf("%s=%d\r\n", "enablePrintStates", settings.enablePrintStates);
     settingsFile->printf("%s=%d\r\n", "enablePrintDuplicateStates", settings.enablePrintDuplicateStates);
     settingsFile->printf("%s=%d\r\n", "enablePrintRtcSync", settings.enablePrintRtcSync);
-    settingsFile->printf("%s=%d\r\n", "enablePrintNTPDiag", settings.enablePrintNTPDiag);
+    settingsFile->printf("%s=%d\r\n", "debugNtp", settings.debugNtp);
     settingsFile->printf("%s=%d\r\n", "enablePrintEthernetDiag", settings.enablePrintEthernetDiag);
     settingsFile->printf("%s=%d\r\n", "radioType", settings.radioType);
+
+    // Network layer
+    settingsFile->printf("%s=%d\r\n", "defaultNetworkType", settings.defaultNetworkType);
+    settingsFile->printf("%s=%d\r\n", "debugNetworkLayer", settings.debugNetworkLayer);
+    settingsFile->printf("%s=%d\r\n", "enableNetworkFailover", settings.enableNetworkFailover);
+    settingsFile->printf("%s=%d\r\n", "printNetworkStatus", settings.printNetworkStatus);
 
     // Record peer MAC addresses
     for (int x = 0; x < settings.espnowPeerCount; x++)
@@ -316,9 +325,12 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%d\r\n", "espnowPeerCount", settings.espnowPeerCount);
     settingsFile->printf("%s=%d\r\n", "enableRtcmMessageChecking", settings.enableRtcmMessageChecking);
     settingsFile->printf("%s=%d\r\n", "bluetoothRadioType", settings.bluetoothRadioType);
-    settingsFile->printf("%s=%d\r\n", "enableTcpClient", settings.enableTcpClient);
-    settingsFile->printf("%s=%d\r\n", "enableTcpServer", settings.enableTcpServer);
-    settingsFile->printf("%s=%d\r\n", "enablePrintTcpStatus", settings.enablePrintTcpStatus);
+    settingsFile->printf("%s=%d\r\n", "enablePvtClient", settings.enablePvtClient);
+    settingsFile->printf("%s=%d\r\n", "enablePvtServer", settings.enablePvtServer);
+    settingsFile->printf("%s=%d\r\n", "enablePvtUdpServer", settings.enablePvtUdpServer);
+    settingsFile->printf("%s=%d\r\n", "debugPvtClient", settings.debugPvtClient);
+    settingsFile->printf("%s=%d\r\n", "debugPvtServer", settings.debugPvtServer);
+    settingsFile->printf("%s=%d\r\n", "debugPvtUdpServer", settings.debugPvtUdpServer);
     settingsFile->printf("%s=%d\r\n", "espnowBroadcast", settings.espnowBroadcast);
     settingsFile->printf("%s=%d\r\n", "antennaHeight", settings.antennaHeight);
     settingsFile->printf("%s=%0.2f\r\n", "antennaReferencePoint", settings.antennaReferencePoint);
@@ -327,6 +339,9 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%d\r\n", "gnssHandlerBufferSize", settings.gnssHandlerBufferSize);
     settingsFile->printf("%s=%d\r\n", "enablePrintBufferOverrun", settings.enablePrintBufferOverrun);
     settingsFile->printf("%s=%d\r\n", "enablePrintSDBuffers", settings.enablePrintSDBuffers);
+    settingsFile->printf("%s=%d\r\n", "periodicDisplay", settings.periodicDisplay);
+    settingsFile->printf("%s=%d\r\n", "periodicDisplayInterval", settings.periodicDisplayInterval);
+    settingsFile->printf("%s=%d\r\n", "rebootSeconds", settings.rebootSeconds);
     settingsFile->printf("%s=%d\r\n", "forceResetOnSDFail", settings.forceResetOnSDFail);
 
     // Record WiFi credential table
@@ -340,7 +355,8 @@ void recordSystemSettingsToFile(File *settingsFile)
     }
 
     settingsFile->printf("%s=%d\r\n", "wifiConfigOverAP", settings.wifiConfigOverAP);
-    settingsFile->printf("%s=%d\r\n", "wifiTcpPort", settings.wifiTcpPort);
+    settingsFile->printf("%s=%d\r\n", "pvtServerPort", settings.pvtServerPort);
+    settingsFile->printf("%s=%d\r\n", "pvtUdpServerPort", settings.pvtUdpServerPort);
     settingsFile->printf("%s=%d\r\n", "minElev", settings.minElev);
 
     settingsFile->printf("%s=%d\r\n", "imuYaw", settings.imuYaw);
@@ -354,6 +370,10 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%d\r\n", "lbandFixTimeout_seconds", settings.lbandFixTimeout_seconds);
     settingsFile->printf("%s=%d\r\n", "minCNO_F9R", settings.minCNO_F9R);
     settingsFile->printf("%s=%d\r\n", "minCNO_F9P", settings.minCNO_F9P);
+    settingsFile->printf("%s=%d\r\n", "shutdownNoChargeTimeout_s", settings.shutdownNoChargeTimeout_s);
+    settingsFile->printf("%s=%d\r\n", "disableSetupButton", settings.disableSetupButton);
+    settingsFile->printf("%s=%d\r\n", "useI2cForLbandCorrections", settings.useI2cForLbandCorrections);
+    settingsFile->printf("%s=%d\r\n", "useI2cForLbandCorrectionsConfigured", settings.useI2cForLbandCorrectionsConfigured);
 
     // Record constellation settings
     for (int x = 0; x < MAX_CONSTELLATIONS; x++)
@@ -389,13 +409,12 @@ void recordSystemSettingsToFile(File *settingsFile)
         settingsFile->printf("%s=%s\r\n", "ethernetDNS", settings.ethernetDNS.toString().c_str());
         settingsFile->printf("%s=%s\r\n", "ethernetGateway", settings.ethernetGateway.toString().c_str());
         settingsFile->printf("%s=%s\r\n", "ethernetSubnet", settings.ethernetSubnet.toString().c_str());
-        settingsFile->printf("%s=%d\r\n", "ethernetHttpPort", settings.ethernetHttpPort);
+        settingsFile->printf("%s=%d\r\n", "httpPort", settings.httpPort);
         settingsFile->printf("%s=%d\r\n", "ethernetNtpPort", settings.ethernetNtpPort);
         settingsFile->printf("%s=%d\r\n", "ethernetDHCP", settings.ethernetDHCP);
         settingsFile->printf("%s=%d\r\n", "enableNTPFile", settings.enableNTPFile);
-        settingsFile->printf("%s=%d\r\n", "enableTcpClientEthernet", settings.enableTcpClientEthernet);
-        settingsFile->printf("%s=%d\r\n", "ethernetTcpPort", settings.ethernetTcpPort);
-        settingsFile->printf("%s=%s\r\n", "hostForTCPClient", settings.hostForTCPClient);
+        settingsFile->printf("%s=%d\r\n", "pvtClientPort", settings.pvtClientPort);
+        settingsFile->printf("%s=%s\r\n", "pvtClientHost", settings.pvtClientHost);
     }
 
     // NTP
@@ -418,6 +437,17 @@ void recordSystemSettingsToFile(File *settingsFile)
     settingsFile->printf("%s=%d\r\n", "gnssUartInterruptsCore", settings.gnssUartInterruptsCore);
     settingsFile->printf("%s=%d\r\n", "bluetoothInterruptsCore", settings.bluetoothInterruptsCore);
     settingsFile->printf("%s=%d\r\n", "i2cInterruptsCore", settings.i2cInterruptsCore);
+    settingsFile->printf("%s=%d\r\n", "rtcmTimeoutBeforeUsingLBand_s", settings.rtcmTimeoutBeforeUsingLBand_s);
+
+    // Automatic Firmware Update
+    settingsFile->printf("%s=%d\r\n", "autoFirmwareCheckMinutes", settings.autoFirmwareCheckMinutes);
+    settingsFile->printf("%s=%d\r\n", "debugFirmwareUpdate", settings.debugFirmwareUpdate);
+    settingsFile->printf("%s=%d\r\n", "enableAutoFirmwareUpdate", settings.enableAutoFirmwareUpdate);
+
+    settingsFile->printf("%s=%d\r\n", "debugLBand", settings.debugLBand);
+    settingsFile->printf("%s=%d\r\n", "enableCaptivePortal", settings.enableCaptivePortal);
+
+    //Add new settings above <------------------------------------------------------------>
 }
 
 // Given a fileName, parse the file and load the given settings struct
@@ -459,7 +489,7 @@ bool loadSystemSettingsFromFileSD(char *fileName, Settings *settings)
                     break;
                 }
 
-                char line[60];
+                char line[100];
                 int lineNumber = 0;
 
                 while (settingsFile.available())
@@ -516,7 +546,7 @@ bool loadSystemSettingsFromFileSD(char *fileName, Settings *settings)
                     break;
                 }
 
-                char line[60];
+                char line[100];
                 int lineNumber = 0;
 
                 while (settingsFile.available())
@@ -1020,6 +1050,8 @@ bool parseLine(char *str, Settings *settings)
         settings->ntripClient_TransmitGGA = d;
     else if (strcmp(settingName, "serialTimeoutGNSS") == 0)
         settings->serialTimeoutGNSS = d;
+
+    // Point Perfect
     else if (strcmp(settingName, "pointPerfectDeviceProfileToken") == 0)
         strcpy(settings->pointPerfectDeviceProfileToken, settingValue);
     else if (strcmp(settingName, "enablePointPerfectCorrections") == 0)
@@ -1049,6 +1081,9 @@ bool parseLine(char *str, Settings *settings)
 
     else if (strcmp(settingName, "lastKeyAttempt") == 0)
         settings->lastKeyAttempt = d;
+    else if (strcmp(settingName, "debugPpCertificate") == 0)
+        settings->debugPpCertificate = d;
+
     else if (strcmp(settingName, "updateZEDSettings") == 0)
     {
         if (settings->updateZEDSettings != d)
@@ -1062,16 +1097,14 @@ bool parseLine(char *str, Settings *settings)
         settings->timeZoneMinutes = d;
     else if (strcmp(settingName, "timeZoneSeconds") == 0)
         settings->timeZoneSeconds = d;
-    else if (strcmp(settingName, "enablePrintWifiIpAddress") == 0)
-        settings->enablePrintWifiIpAddress = d;
     else if (strcmp(settingName, "enablePrintState") == 0)
         settings->enablePrintState = d;
-    else if (strcmp(settingName, "enablePrintWifiState") == 0)
-        settings->enablePrintWifiState = d;
-    else if (strcmp(settingName, "enablePrintNtripClientState") == 0)
-        settings->enablePrintNtripClientState = d;
-    else if (strcmp(settingName, "enablePrintNtripServerState") == 0)
-        settings->enablePrintNtripServerState = d;
+    else if (strcmp(settingName, "debugWifiState") == 0)
+        settings->debugWifiState = d;
+    else if (strcmp(settingName, "debugNtripClientState") == 0)
+        settings->debugNtripClientState = d;
+    else if (strcmp(settingName, "debugNtripServerState") == 0)
+        settings->debugNtripServerState = d;
     else if (strcmp(settingName, "enablePrintPosition") == 0)
         settings->enablePrintPosition = d;
     else if (strcmp(settingName, "enablePrintIdleTime") == 0)
@@ -1088,18 +1121,18 @@ bool parseLine(char *str, Settings *settings)
         settings->enablePrintLogFileStatus = d;
     else if (strcmp(settingName, "enablePrintRingBufferOffsets") == 0)
         settings->enablePrintRingBufferOffsets = d;
-    else if (strcmp(settingName, "enablePrintNtripServerRtcm") == 0)
-        settings->enablePrintNtripServerRtcm = d;
-    else if (strcmp(settingName, "enablePrintNtripClientRtcm") == 0)
-        settings->enablePrintNtripClientRtcm = d;
+    else if (strcmp(settingName, "debugNtripServerRtcm") == 0)
+        settings->debugNtripServerRtcm = d;
+    else if (strcmp(settingName, "debugNtripClientRtcm") == 0)
+        settings->debugNtripClientRtcm = d;
     else if (strcmp(settingName, "enablePrintStates") == 0)
         settings->enablePrintStates = d;
     else if (strcmp(settingName, "enablePrintDuplicateStates") == 0)
         settings->enablePrintDuplicateStates = d;
     else if (strcmp(settingName, "enablePrintRtcSync") == 0)
         settings->enablePrintRtcSync = d;
-    else if (strcmp(settingName, "enablePrintNTPDiag") == 0)
-        settings->enablePrintNTPDiag = d;
+    else if (strcmp(settingName, "debugNtp") == 0)
+        settings->debugNtp = d;
     else if (strcmp(settingName, "enablePrintEthernetDiag") == 0)
         settings->enablePrintEthernetDiag = d;
     else if (strcmp(settingName, "radioType") == 0)
@@ -1112,12 +1145,18 @@ bool parseLine(char *str, Settings *settings)
         settings->radioType = (RadioType_e)d;
     else if (strcmp(settingName, "bluetoothRadioType") == 0)
         settings->bluetoothRadioType = (BluetoothRadioType_e)d;
-    else if (strcmp(settingName, "enableTcpClient") == 0)
-        settings->enableTcpClient = d;
-    else if (strcmp(settingName, "enableTcpServer") == 0)
-        settings->enableTcpServer = d;
-    else if (strcmp(settingName, "enablePrintTcpStatus") == 0)
-        settings->enablePrintTcpStatus = d;
+    else if (strcmp(settingName, "enablePvtClient") == 0)
+        settings->enablePvtClient = d;
+    else if (strcmp(settingName, "enablePvtServer") == 0)
+        settings->enablePvtServer = d;
+    else if (strcmp(settingName, "enablePvtUdpServer") == 0)
+        settings->enablePvtUdpServer = d;
+    else if (strcmp(settingName, "debugPvtClient") == 0)
+        settings->debugPvtClient = d;
+    else if (strcmp(settingName, "debugPvtServer") == 0)
+        settings->debugPvtServer = d;
+    else if (strcmp(settingName, "debugPvtUdpServer") == 0)
+        settings->debugPvtUdpServer = d;
     else if (strcmp(settingName, "espnowBroadcast") == 0)
         settings->espnowBroadcast = d;
     else if (strcmp(settingName, "antennaHeight") == 0)
@@ -1134,12 +1173,20 @@ bool parseLine(char *str, Settings *settings)
         settings->enablePrintBufferOverrun = d;
     else if (strcmp(settingName, "enablePrintSDBuffers") == 0)
         settings->enablePrintSDBuffers = d;
+    else if (strcmp(settingName, "periodicDisplay") == 0)
+        settings->periodicDisplay = d;
+    else if (strcmp(settingName, "periodicDisplayInterval") == 0)
+        settings->periodicDisplayInterval = d;
+    else if (strcmp(settingName, "rebootSeconds") == 0)
+        settings->rebootSeconds = d;
     else if (strcmp(settingName, "forceResetOnSDFail") == 0)
         settings->forceResetOnSDFail = d;
     else if (strcmp(settingName, "wifiConfigOverAP") == 0)
         settings->wifiConfigOverAP = d;
-    else if (strcmp(settingName, "wifiTcpPort") == 0)
-        settings->wifiTcpPort = d;
+    else if (strcmp(settingName, "pvtServerPort") == 0)
+        settings->pvtServerPort = d;
+    else if (strcmp(settingName, "pvtUdpServerPort") == 0)
+        settings->pvtUdpServerPort = d;
     else if (strcmp(settingName, "minElev") == 0)
     {
         if (settings->minElev != d)
@@ -1225,18 +1272,16 @@ bool parseLine(char *str, Settings *settings)
         String addr = String(settingValue);
         settings->ethernetSubnet.fromString(addr);
     }
-    else if (strcmp(settingName, "ethernetHttpPort") == 0)
-        settings->ethernetHttpPort = d;
+    else if (strcmp(settingName, "httpPort") == 0)
+        settings->httpPort = d;
     else if (strcmp(settingName, "ethernetNtpPort") == 0)
         settings->ethernetNtpPort = d;
     else if (strcmp(settingName, "ethernetDHCP") == 0)
         settings->ethernetDHCP = d;
-    else if (strcmp(settingName, "enableTcpClientEthernet") == 0)
-        settings->enableTcpClientEthernet = d;
-    else if (strcmp(settingName, "ethernetTcpPort") == 0)
-        settings->ethernetTcpPort = d;
-    else if (strcmp(settingName, "hostForTCPClient") == 0)
-        strcpy(settings->hostForTCPClient, settingValue);
+    else if (strcmp(settingName, "pvtClientPort") == 0)
+        settings->pvtClientPort = d;
+    else if (strcmp(settingName, "pvtClientHost") == 0)
+        strcpy(settings->pvtClientHost, settingValue);
     // NTP
     else if (strcmp(settingName, "ntpPollExponent") == 0)
         settings->ntpPollExponent = d;
@@ -1294,6 +1339,44 @@ bool parseLine(char *str, Settings *settings)
         settings->bluetoothInterruptsCore = d;
     else if (strcmp(settingName, "i2cInterruptsCore") == 0)
         settings->i2cInterruptsCore = d;
+    else if (strcmp(settingName, "shutdownNoChargeTimeout_s") == 0)
+        settings->shutdownNoChargeTimeout_s = d;
+    else if (strcmp(settingName, "disableSetupButton") == 0)
+        settings->disableSetupButton = d;
+    else if (strcmp(settingName, "useI2cForLbandCorrections") == 0)
+        settings->useI2cForLbandCorrections = d;
+    else if (strcmp(settingName, "useI2cForLbandCorrectionsConfigured") == 0)
+        settings->useI2cForLbandCorrectionsConfigured = d;
+
+    // Network layer
+    else if (strcmp(settingName, "defaultNetworkType") == 0)
+        settings->defaultNetworkType = d;
+    else if (strcmp(settingName, "debugNetworkLayer") == 0)
+        settings->debugNetworkLayer = d;
+    else if (strcmp(settingName, "enableNetworkFailover") == 0)
+        settings->enableNetworkFailover = d;
+    else if (strcmp(settingName, "printNetworkStatus") == 0)
+        settings->printNetworkStatus = d;
+    else if (strcmp(settingName, "rtcmTimeoutBeforeUsingLBand_s") == 0)
+        settings->rtcmTimeoutBeforeUsingLBand_s = d;
+
+    // Automatic Firmware Update
+    else if (strcmp(settingName, "autoFirmwareCheckMinutes") == 0)
+        settings->autoFirmwareCheckMinutes = d;
+    else if (strcmp(settingName, "debugFirmwareUpdate") == 0)
+        settings->debugFirmwareUpdate = d;
+    else if (strcmp(settingName, "enableAutoFirmwareUpdate") == 0)
+        settings->enableAutoFirmwareUpdate = d;
+
+    else if (strcmp(settingName, "debugLBand") == 0)
+        settings->debugLBand = d;
+    else if (strcmp(settingName, "enableCaptivePortal") == 0)
+        settings->enableCaptivePortal = d;
+
+
+
+    //Add new settings above
+    //<------------------------------------------------------------>
 
     // Check for bulk settings (WiFi credentials, constellations, message rates, ESPNOW Peers)
     // Must be last on else list
@@ -1426,7 +1509,7 @@ bool parseLine(char *str, Settings *settings)
         // Last catch
         if (knownSetting == false)
         {
-            systemPrintf("Unknown setting %s\r\n", settingName);
+            log_d("Unknown setting %s", settingName);
         }
     }
 

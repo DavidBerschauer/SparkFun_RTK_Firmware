@@ -428,9 +428,6 @@ void updateDisplay()
                 iconsRadio = setWiFiIcon(); // Blink WiFi in center
                 paintGettingKeys();
                 break;
-            case (STATE_KEYS_PROVISION_WIFI_TIMEOUT):
-                // Do nothing. Quick, fall through state.
-                break;
 
             case (STATE_ESPNOW_PAIRING_NOT_STARTED):
                 paintEspNowPairing();
@@ -608,31 +605,7 @@ void displaySplash()
         printTextCenter("RTK", yPos, QW_FONT_8X16, 1, false);
 
         yPos = yPos + fontHeight + 5;
-
-        if (productVariant == RTK_SURVEYOR)
-        {
-            printTextCenter("Surveyor", yPos, QW_FONT_8X16, 1, false);
-        }
-        else if (productVariant == RTK_EXPRESS)
-        {
-            printTextCenter("Express", yPos, QW_FONT_8X16, 1, false);
-        }
-        else if (productVariant == RTK_EXPRESS_PLUS)
-        {
-            printTextCenter("Express+", yPos, QW_FONT_8X16, 1, false);
-        }
-        else if (productVariant == RTK_FACET)
-        {
-            printTextCenter("Facet", yPos, QW_FONT_8X16, 1, false);
-        }
-        else if (productVariant == RTK_FACET_LBAND)
-        {
-            printTextCenter("Facet LB", yPos, QW_FONT_8X16, 1, false);
-        }
-        else if (productVariant == REFERENCE_STATION)
-        {
-            printTextCenter("Ref Stn", yPos, QW_FONT_8X16, 1, false);
-        }
+        printTextCenter(productDisplayNames[productVariant], yPos, QW_FONT_8X16, 1, false);
 
         yPos = yPos + fontHeight + 7;
         char unitFirmware[50];
@@ -1753,7 +1726,7 @@ void printTextwithKerning(const char *newText, uint8_t xPos, uint8_t yPos, uint8
 void paintRTCM()
 {
     int yPos = 17;
-    if (ntripServerState == NTRIP_SERVER_CASTING)
+    if (ntripServerIsCasting())
         printTextCenter("Casting", yPos, QW_FONT_8X16, 1, false); // text, y, font type, kerning, inverted
     else
         printTextCenter("Xmitting", yPos, QW_FONT_8X16, 1, false); // text, y, font type, kerning, inverted
@@ -1929,6 +1902,27 @@ void displayRoverStart(uint16_t displayTime)
     }
 }
 
+void displayNoRingBuffer(uint16_t displayTime)
+{
+    if (online.display == true)
+    {
+        oled.erase();
+
+        uint8_t fontHeight = 8;
+        uint8_t yPos = oled.getHeight() / 3 - fontHeight;
+
+        printTextCenter("Fix GNSS", yPos, QW_FONT_5X7, 1, false);  // text, y, font type, kerning, inverted
+        yPos += fontHeight;
+        printTextCenter("Handler", yPos, QW_FONT_5X7, 1, false);   // text, y, font type, kerning, inverted
+        yPos += fontHeight;
+        printTextCenter("Buffer Sz", yPos, QW_FONT_5X7, 1, false); // text, y, font type, kerning, inverted
+
+        oled.display();
+
+        delay(displayTime);
+    }
+}
+
 void displayRoverSuccess(uint16_t displayTime)
 {
     if (online.display == true)
@@ -2063,7 +2057,7 @@ void displayWiFiConfig()
 
 #ifdef COMPILE_AP
     IPAddress myIpAddress;
-    if (settings.wifiConfigOverAP == true)
+    if (WiFi.getMode() == WIFI_AP)
         myIpAddress = WiFi.softAPIP();
     else
         myIpAddress = WiFi.localIP();
@@ -2288,7 +2282,7 @@ void paintSystemTest()
                 oled.print("FAIL");
 
             if (productVariant == RTK_EXPRESS || productVariant == RTK_EXPRESS_PLUS || productVariant == RTK_FACET ||
-                productVariant == RTK_FACET_LBAND)
+                productVariant == RTK_FACET_LBAND || productVariant == RTK_FACET_LBAND_DIRECT)
             {
                 oled.setCursor(xOffset, yOffset + (1 * charHeight)); // x, y
                 oled.print("Accel:");
@@ -2329,7 +2323,7 @@ void paintSystemTest()
                 oled.print("FAIL");
 
             if (productVariant == RTK_EXPRESS || productVariant == RTK_EXPRESS_PLUS || productVariant == RTK_FACET ||
-                productVariant == RTK_FACET_LBAND)
+                productVariant == RTK_FACET_LBAND || productVariant == RTK_FACET_LBAND_DIRECT)
             {
                 oled.setCursor(xOffset, yOffset + (4 * charHeight)); // x, y
                 oled.print("Mux:");
@@ -2392,7 +2386,7 @@ void paintSystemTest()
                 oled.print("OK");
         } // End display 1
 
-        if (productVariant == RTK_FACET_LBAND)
+        if (productVariant == RTK_FACET_LBAND || productVariant == RTK_FACET_LBAND_DIRECT)
         {
             if (systemTestDisplayNumber == 0)
             {
@@ -2488,7 +2482,7 @@ void getAngles()
                 accelZ *= -1.0;
                 accelX *= -1.0;
             }
-            else if (productVariant == RTK_FACET || productVariant == RTK_FACET_LBAND)
+            else if (productVariant == RTK_FACET || productVariant == RTK_FACET_LBAND || productVariant == RTK_FACET_LBAND_DIRECT)
             {
                 accelZ = accel.getX();
                 accelX = accel.getY();
@@ -2559,7 +2553,13 @@ void paintDisplaySetupProfile(const char *firstState)
     {
         // Lookup next available profile, limit to 8 characters
         getProfileNameFromUnit(index, profileName, sizeof(profileName));
-        printTextCenter(profileName, 12 * itemsDisplayed, QW_FONT_8X16, 1, itemsDisplayed == 3);
+
+        profileName[6]= 0; //Shorten profileName to 6 characters
+
+        char miniProfileName[16] = {0};
+        snprintf(miniProfileName, sizeof(miniProfileName), "%d_%s", index, profileName); //Prefix with index #
+
+        printTextCenter(miniProfileName, 12 * itemsDisplayed, QW_FONT_8X16, 1, itemsDisplayed == 3);
         index++;
     }
 }

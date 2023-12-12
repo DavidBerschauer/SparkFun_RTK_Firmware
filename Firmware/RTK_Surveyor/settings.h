@@ -33,7 +33,6 @@ typedef enum
     STATE_KEYS_LBAND_ENCRYPTED,
     STATE_KEYS_PROVISION_WIFI_STARTED,
     STATE_KEYS_PROVISION_WIFI_CONNECTED,
-    STATE_KEYS_PROVISION_WIFI_TIMEOUT,
     STATE_ESPNOW_PAIRING_NOT_STARTED,
     STATE_ESPNOW_PAIRING,
     STATE_NTPSERVER_NOT_STARTED,
@@ -55,6 +54,23 @@ bool newSystemStateRequested = false;
 // When user pauses for X amount of time, system will enter that state
 SystemState setupState = STATE_MARK_EVENT;
 
+// Base modes set with RTK_MODE
+#define RTK_MODE_BASE_FIXED         0x0001
+#define RTK_MODE_BASE_SURVEY_IN     0x0002
+#define RTK_MODE_BUBBLE_LEVEL       0x0004
+#define RTK_MODE_ETHERNET_CONFIG    0x0008
+#define RTK_MODE_NTP                0x0010
+#define RTK_MODE_ROVER              0x0020
+#define RTK_MODE_TESTING            0x0040
+#define RTK_MODE_WIFI_CONFIG        0x0080
+
+typedef uint8_t RtkMode_t;
+
+#define RTK_MODE(mode)          rtkMode = mode;
+
+#define EQ_RTK_MODE(mode)       (rtkMode && (rtkMode == (mode & rtkMode)))
+#define NEQ_RTK_MODE(mode)      (rtkMode && (rtkMode != (mode & rtkMode)))
+
 typedef enum
 {
     RTK_SURVEYOR = 0,
@@ -63,9 +79,53 @@ typedef enum
     RTK_EXPRESS_PLUS,
     RTK_FACET_LBAND,
     REFERENCE_STATION,
+    RTK_FACET_LBAND_DIRECT,
+    // Add new values just above this line
     RTK_UNKNOWN,
 } ProductVariant;
 ProductVariant productVariant = RTK_SURVEYOR;
+
+const char * const productDisplayNames[] =
+{
+    "Surveyor",
+    "Express",
+    "Facet",
+    "Express+",
+    "Facet LB",
+    "Ref Stn",
+    "Facet LD",
+    // Add new values just above this line
+    "Unknown",
+};
+const int productDisplayNamesEntries = sizeof (productDisplayNames) / sizeof(productDisplayNames[0]);
+
+const char * const platformFilePrefixTable[] =
+{
+    "SFE_Surveyor",
+    "SFE_Express",
+    "SFE_Facet",
+    "SFE_Express_Plus",
+    "SFE_Facet_LBand",
+    "SFE_Reference_Station",
+    "SFE_Facet_LBand_Direct",
+    // Add new values just above this line
+    "SFE_Unknown",
+};
+const int platformFilePrefixTableEntries = sizeof (platformFilePrefixTable) / sizeof(platformFilePrefixTable[0]);
+
+const char * const platformPrefixTable[] =
+{
+    "Surveyor",
+    "Express",
+    "Facet",
+    "Express Plus",
+    "Facet L-Band",
+    "Reference Station",
+    "Facet L-Band Direct",
+    // Add new values just above this line
+    "Unknown",
+};
+const int platformPrefixTableEntries = sizeof (platformPrefixTable) / sizeof(platformPrefixTable[0]);
 
 // Macros to show if the GNSS is I2C or SPI
 #define USE_SPI_GNSS (productVariant == REFERENCE_STATION)
@@ -76,7 +136,11 @@ ProductVariant productVariant = RTK_SURVEYOR;
 #define USE_SPI_MICROSD (!USE_MMC_MICROSD)
 
 // Macro to show if the the RTK variant has Ethernet
+#ifdef COMPILE_ETHERNET
 #define HAS_ETHERNET (productVariant == REFERENCE_STATION)
+#else // COMPILE_ETHERNET
+#define HAS_ETHERNET false
+#endif // COMPILE_ETHERNET
 
 // Macro to show if the the RTK variant has a GNSS TP interrupt - for accurate clock setting
 // The GNSS UBX PVT message is sent ahead of the top-of-second
@@ -144,6 +208,63 @@ typedef enum
     ERROR_GPS_CONFIG_FAIL,
 } t_errorNumber;
 
+// Define the types of network
+enum NetworkTypes
+{
+    NETWORK_TYPE_WIFI = 0,
+    NETWORK_TYPE_ETHERNET,
+    // Last hardware network type
+    NETWORK_TYPE_MAX,
+
+    // Special cases
+    NETWORK_TYPE_USE_DEFAULT = NETWORK_TYPE_MAX,
+    NETWORK_TYPE_ACTIVE,
+    // Last network type
+    NETWORK_TYPE_LAST,
+};
+
+// Define the states of the network device
+enum NetworkStates
+{
+    NETWORK_STATE_OFF = 0,
+    NETWORK_STATE_DELAY,
+    NETWORK_STATE_CONNECTING,
+    NETWORK_STATE_IN_USE,
+    NETWORK_STATE_WAIT_NO_USERS,
+    // Last network state
+    NETWORK_STATE_MAX
+};
+
+// Define the network users
+enum NetworkUsers
+{
+    NETWORK_USER_NTP_SERVER = 0,        // NTP server
+    NETWORK_USER_NTRIP_CLIENT,          // NTRIP client
+    NETWORK_USER_NTRIP_SERVER,          // NTRIP server
+    NETWORK_USER_OTA_FIRMWARE_UPDATE,   // Over-The-Air firmware updates
+    NETWORK_USER_PVT_CLIENT,            // PVT client
+    NETWORK_USER_PVT_SERVER,            // PVT server
+    NETWORK_USER_PVT_UDP_SERVER,        // PVT UDP server
+    // Last network user
+    NETWORK_USER_MAX
+};
+
+typedef uint8_t NETWORK_USER;
+
+typedef struct _NETWORK_DATA
+{
+    uint8_t requestedNetwork;  // Type of network requested
+    uint8_t type;              // Type of network
+    NETWORK_USER activeUsers;  // Active users of this network device
+    NETWORK_USER userOpens;    // Users requesting access to this network
+    uint8_t connectionAttempt; // Number of previous connection attempts
+    bool restart;              // Set if restart is allowed
+    bool shutdown;             // Network is shutting down
+    uint8_t state;             // Current state of the network
+    uint32_t timeout;          // Timer timeout value
+    uint32_t timerStart;       // Starting millis for the timer
+} NETWORK_DATA;
+
 // Even though WiFi and ESP-Now operate on the same radio, we treat
 // then as different states so that we can leave the radio on if
 // either WiFi or ESP-Now are active
@@ -165,30 +286,6 @@ typedef enum
     ESPNOW_PAIRED,
 } ESPNOWState;
 volatile ESPNOWState espnowState = ESPNOW_OFF;
-
-typedef enum
-{
-    NTRIP_CLIENT_OFF = 0,           // Using Bluetooth or NTRIP server
-    NTRIP_CLIENT_ON,                // WIFI_START state
-    NTRIP_CLIENT_NETWORK_STARTED,   // Connecting to WiFi access point or Ethernet
-    NTRIP_CLIENT_NETWORK_CONNECTED, // Connected to an access point or Ethernet
-    NTRIP_CLIENT_CONNECTING,        // Attempting a connection to the NTRIP caster
-    NTRIP_CLIENT_CONNECTED,         // Connected to the NTRIP caster
-} NTRIPClientState;
-volatile NTRIPClientState ntripClientState = NTRIP_CLIENT_OFF;
-
-typedef enum
-{
-    NTRIP_SERVER_OFF = 0,           // Using Bluetooth or NTRIP client
-    NTRIP_SERVER_ON,                // WIFI_START state
-    NTRIP_SERVER_NETWORK_STARTED,   // Connecting to WiFi access point
-    NTRIP_SERVER_NETWORK_CONNECTED, // WiFi connected to an access point
-    NTRIP_SERVER_WAIT_GNSS_DATA,    // Waiting for correction data from GNSS
-    NTRIP_SERVER_CONNECTING,        // Attempting a connection to the NTRIP caster
-    NTRIP_SERVER_AUTHORIZATION,     // Validate the credentials
-    NTRIP_SERVER_CASTING,           // Sending correction data to the NTRIP caster
-} NTRIPServerState;
-volatile NTRIPServerState ntripServerState = NTRIP_SERVER_OFF;
 
 typedef enum
 {
@@ -246,47 +343,24 @@ typedef struct WiFiNetwork
 
 #define MAX_WIFI_NETWORKS 4
 
-typedef struct _PARSE_STATE *P_PARSE_STATE;
-
-// Parse routine
-typedef uint8_t (*PARSE_ROUTINE)(P_PARSE_STATE parse, // Parser state
-                                 uint8_t data);       // Incoming data byte
-
-// End of message callback routine
-typedef void (*EOM_CALLBACK)(P_PARSE_STATE parse, // Parser state
-                             uint8_t type);       // Message type
-
-#define PARSE_BUFFER_LENGTH 3000 // Some USB RAWX messages can be > 2k
-
-typedef struct _PARSE_STATE
-{
-    PARSE_ROUTINE state;                 // Parser state routine
-    EOM_CALLBACK eomCallback;            // End of message callback routine
-    const char *parserName;              // Name of parser
-    uint32_t crc;                        // RTCM computed CRC
-    uint32_t rtcmCrc;                    // Computed CRC value for the RTCM message
-    uint32_t invalidRtcmCrcs;            // Number of bad RTCM CRCs detected
-    uint16_t bytesRemaining;             // Bytes remaining in RTCM CRC calculation
-    uint16_t length;                     // Message length including line termination
-    uint16_t maxLength;                  // Maximum message length including line termination
-    uint16_t message;                    // RTCM message number
-    uint16_t nmeaLength;                 // Length of the NMEA message without line termination
-    uint8_t buffer[PARSE_BUFFER_LENGTH]; // Buffer containing the message
-    uint8_t nmeaMessageName[16];         // Message name
-    uint8_t nmeaMessageNameLength;       // Length of the message name
-    uint8_t ck_a;                        // U-blox checksum byte 1
-    uint8_t ck_b;                        // U-blox checksum byte 2
-    bool computeCrc;                     // Compute the CRC when true
-} PARSE_STATE;
+typedef uint16_t RING_BUFFER_OFFSET;
 
 typedef enum
 {
-    ETH_NOT_STARTED,
+    ETH_NOT_STARTED = 0,
     ETH_STARTED_CHECK_CABLE,
     ETH_STARTED_START_DHCP,
     ETH_CONNECTED,
     ETH_CAN_NOT_BEGIN,
+    // Add new states here
+    ETH_MAX_STATE
 } ethernetStatus_e;
+
+const char *const ethernetStates[] = {
+    "ETH_NOT_STARTED", "ETH_STARTED_CHECK_CABLE", "ETH_STARTED_START_DHCP", "ETH_CONNECTED", "ETH_CAN_NOT_BEGIN",
+};
+
+const int ethernetStateEntries = sizeof(ethernetStates) / sizeof(ethernetStates[0]);
 
 // Radio status LED goes from off (LED off), no connection (blinking), to connected (solid)
 typedef enum
@@ -395,6 +469,66 @@ typedef enum
 } CoordinateInputType;
 
 #define UBX_ID_NOT_AVAILABLE 0xFF
+
+// Define the periodic display values
+typedef uint32_t PeriodicDisplay_t;
+
+enum PeriodDisplayValues
+{
+    PD_BLUETOOTH_DATA_RX = 0,   //  0
+    PD_BLUETOOTH_DATA_TX,       //  1
+
+    PD_ETHERNET_IP_ADDRESS,     //  2
+    PD_ETHERNET_STATE,          //  3
+
+    PD_NETWORK_STATE,           //  4
+
+    PD_NTP_SERVER_DATA,         //  5
+    PD_NTP_SERVER_STATE,        //  6
+
+    PD_NTRIP_CLIENT_DATA,       //  7
+    PD_NTRIP_CLIENT_GGA,        //  8
+    PD_NTRIP_CLIENT_STATE,      //  9
+
+    PD_NTRIP_SERVER_DATA,       // 10
+    PD_NTRIP_SERVER_STATE,      // 11
+
+    PD_PVT_CLIENT_DATA,         // 12
+    PD_PVT_CLIENT_STATE,        // 13
+
+    PD_PVT_SERVER_DATA,         // 14
+    PD_PVT_SERVER_STATE,        // 15
+    PD_PVT_SERVER_CLIENT_DATA,  // 16
+
+    PD_PVT_UDP_SERVER_DATA,         // 17
+    PD_PVT_UDP_SERVER_STATE,        // 18
+    PD_PVT_UDP_SERVER_BROADCAST_DATA,  // 19
+
+    PD_RING_BUFFER_MILLIS,      // 20
+
+    PD_SD_LOG_WRITE,            // 21
+
+    PD_TASK_BLUETOOTH_READ,     // 22
+    PD_TASK_BUTTON_CHECK,       // 23
+    PD_TASK_GNSS_READ,          // 24
+    PD_TASK_HANDLE_GNSS_DATA,   // 25
+    PD_TASK_SD_SIZE_CHECK,      // 26
+
+    PD_WIFI_IP_ADDRESS,         // 27
+    PD_WIFI_STATE,              // 28
+
+    PD_ZED_DATA_RX,             // 29
+    PD_ZED_DATA_TX,             // 30
+
+    PD_OTA_CLIENT_STATE,        // 31
+    // Add new values before this line
+};
+
+#define PERIODIC_MASK(x) (1 << x)
+#define PERIODIC_DISPLAY(x) (periodicDisplay & PERIODIC_MASK(x))
+#define PERIODIC_CLEAR(x) periodicDisplay &= ~PERIODIC_MASK(x)
+#define PERIODIC_SETTING(x) (settings.periodicDisplay & PERIODIC_MASK(x))
+#define PERIODIC_TOGGLE(x) settings.periodicDisplay ^= PERIODIC_MASK(x)
 
 // These are the allowable messages to broadcast and log (if enabled)
 
@@ -789,6 +923,7 @@ typedef struct
     int16_t serialTimeoutGNSS = 1; // In ms - used during SerialGNSS.begin. Number of ms to pass of no data before
                                    // hardware serial reports data available.
 
+    // Point Perfect
     char pointPerfectDeviceProfileToken[40] = "";
     bool enablePointPerfectCorrections = true;
     bool autoKeyRenewal = true; // Attempt to get keys if we get under 28 days from the expiration date
@@ -807,6 +942,8 @@ typedef struct
     uint64_t lastKeyAttempt = 0;     // Epoch time of last attempt at obtaining keys
     bool updateZEDSettings = true;   // When in doubt, update the ZED with current settings
     uint32_t LBandFreq = 1556290000; // Default to US band
+
+    bool debugPpCertificate = false; // Debug Point Perfect certificate management
 
     // Time Zone - Default to UTC
     int8_t timeZoneHours = 0;
@@ -827,11 +964,11 @@ typedef struct
     bool enablePrintDuplicateStates = false;
     bool enablePrintRtcSync = false;
     RadioType_e radioType = RADIO_EXTERNAL;
-    uint8_t espnowPeers[5][6]; // Max of 5 peers. Contains the MAC addresses (6 bytes) of paired units
+    uint8_t espnowPeers[5][6] = {0}; // Max of 5 peers. Contains the MAC addresses (6 bytes) of paired units
     uint8_t espnowPeerCount = 0;
     bool enableRtcmMessageChecking = false;
     BluetoothRadioType_e bluetoothRadioType = BLUETOOTH_RADIO_SPP;
-    bool runLogTest = false; // When set to true, device will create a series of test logs
+    bool runLogTest = false;           // When set to true, device will create a series of test logs
     bool espnowBroadcast = true;       // When true, overrides peers and sends all data via broadcast
     int16_t antennaHeight = 0;         // in mm
     float antennaReferencePoint = 0.0; // in mm
@@ -842,6 +979,10 @@ typedef struct
 
     bool enablePrintBufferOverrun = false;
     bool enablePrintSDBuffers = false;
+    PeriodicDisplay_t periodicDisplay = (PeriodicDisplay_t)0; //Turn off all periodic debug displays by default.
+    uint32_t periodicDisplayInterval = 15 * 1000;
+
+    uint32_t rebootSeconds = (uint32_t)-1; // Disabled, reboots after uptime reaches this number of seconds
     bool forceResetOnSDFail = false; // Set to true to reset system if SD is detected but fails to start.
 
     uint8_t minElev = 10; // Minimum elevation (in deg) for a GNSS satellite to be used in NAV
@@ -870,9 +1011,14 @@ typedef struct
     uint8_t gnssReadTaskCore = 1;           // Core where task should run, 0=core, 1=Arduino
     uint8_t handleGnssDataTaskCore = 1;     // Core where task should run, 0=core, 1=Arduino
     uint8_t gnssUartInterruptsCore =
+        1; // Core where hardware is started and interrupts are assigned to, 0=core, 1=Arduino
+    uint8_t bluetoothInterruptsCore =
         1;                         // Core where hardware is started and interrupts are assigned to, 0=core, 1=Arduino
-    uint8_t bluetoothInterruptsCore = 1;  // Core where hardware is started and interrupts are assigned to, 0=core, 1=Arduino
     uint8_t i2cInterruptsCore = 1; // Core where hardware is started and interrupts are assigned to, 0=core, 1=Arduino
+    uint32_t shutdownNoChargeTimeout_s = 0; // If > 0, shut down unit after timeout if not charging
+    bool disableSetupButton = false;                  // By default, allow setup through the overlay button(s)
+    bool useI2cForLbandCorrections = true; //Set to false to stop I2C callback. Corrections will require direct ZED to NEO UART2 connections.
+    bool useI2cForLbandCorrectionsConfigured = false; //If a user sets useI2cForLbandCorrections, this goes true.
 
     // Ethernet
     bool enablePrintEthernetDiag = false;
@@ -881,14 +1027,11 @@ typedef struct
     IPAddress ethernetDNS = {194, 168, 4, 100};
     IPAddress ethernetGateway = {192, 168, 0, 1};
     IPAddress ethernetSubnet = {255, 255, 255, 0};
-    uint16_t ethernetHttpPort = 80;
+    uint16_t httpPort = 80;
 
     // WiFi
-    bool enablePrintWifiIpAddress = true;
-    bool enablePrintWifiState = false;
+    bool debugWifiState = false;
     bool wifiConfigOverAP = true; // Configure device over Access Point or have it connect to WiFi
-    uint16_t wifiTcpPort =
-        2947; // TCP port to use in Client/Server mode. 2947 is GPS Daemon: http://tcp-udp-ports.com/port-2947.htm
     WiFiNetwork wifiNetworks[MAX_WIFI_NETWORKS] = {
         {"", ""},
         {"", ""},
@@ -896,26 +1039,32 @@ typedef struct
         {"", ""},
     };
 
+    // Network layer
+    uint8_t defaultNetworkType = NETWORK_TYPE_USE_DEFAULT;
+    bool debugNetworkLayer = false;    // Enable debugging of the network layer
+    bool enableNetworkFailover = true; // Enable failover between Ethernet / WiFi
+    bool printNetworkStatus = true;    // Print network status (delays, failovers, IP address)
+
     // Multicast DNS Server
-    bool mdnsEnable = true;      // Allows locating of device from browser address 'rtk.local'
+    bool mdnsEnable = true; // Allows locating of device from browser address 'rtk.local'
 
     // NTP
+    bool debugNtp = false;
     uint16_t ethernetNtpPort = 123;
     bool enableNTPFile = false;  // Log NTP requests to file
-    bool enablePrintNTPDiag = false;
     uint8_t ntpPollExponent = 6; // NTPpacket::defaultPollExponent 2^6 = 64 seconds
     int8_t ntpPrecision = -20;   // NTPpacket::defaultPrecision 2^-20 = 0.95us
     uint32_t ntpRootDelay = 0;   // NTPpacket::defaultRootDelay = 0. ntpRootDelay is defined in microseconds.
-                                 // processOneNTPRequest will convert it to seconds and fraction.
+                                 // ntpProcessOneRequest will convert it to seconds and fraction.
     uint32_t ntpRootDispersion =
         1000; // NTPpacket::defaultRootDispersion 1007us = 2^-16 * 66. ntpRootDispersion is defined in microseconds.
-              // processOneNTPRequest will convert it to seconds and fraction.
+              // ntpProcessOneRequest will convert it to seconds and fraction.
     char ntpReferenceId[5] = {'G', 'P', 'S', 0,
                               0}; // NTPpacket::defaultReferenceId. Ref ID is 4 chars. Add one extra for a NULL.
 
     // NTRIP Client
-    bool enablePrintNtripClientRtcm = false;
-    bool enablePrintNtripClientState = false;
+    bool debugNtripClientRtcm = false;
+    bool debugNtripClientState = false;
     bool enableNtripClient = false;
     char ntripClient_CasterHost[50] = "rtk2go.com"; // It's free...
     uint16_t ntripClient_CasterPort = 2101;
@@ -927,8 +1076,8 @@ typedef struct
     bool ntripClient_TransmitGGA = true;
 
     // NTRIP Server
-    bool enablePrintNtripServerRtcm = false;
-    bool enablePrintNtripServerState = false;
+    bool debugNtripServerRtcm = false;
+    bool debugNtripServerState = false;
     bool enableNtripServer = false;
     bool ntripServer_StartAtSurveyIn = false;       // true = Start WiFi instead of Bluetooth at Survey-In
     char ntripServer_CasterHost[50] = "rtk2go.com"; // It's free...
@@ -940,15 +1089,34 @@ typedef struct
     char ntripServer_MountPointPW[50] = "WR5wRo4H";
 
     // TCP Client
-    bool enablePrintTcpStatus = false;
-    bool enableTcpClient = false;
-    bool enableTcpClientEthernet = false;
-    uint16_t ethernetTcpPort =
-        2947; // TCP port to use in Client mode. 2947 is GPS Daemon: http://tcp-udp-ports.com/port-2947.htm
-    char hostForTCPClient[50] = "";
+    bool debugPvtClient = false;
+    bool enablePvtClient = false;
+    uint16_t pvtClientPort = 2948; // PVT client port. 2948 is GPS Daemon: http://tcp-udp-ports.com/port-2948.htm
+    char pvtClientHost[50] = "";
 
     // TCP Server
-    bool enableTcpServer = false;
+    bool debugPvtServer = false;
+    bool enablePvtServer = false;
+    uint16_t pvtServerPort = 2948; // PVT server port, 2948 is GPS Daemon: http://tcp-udp-ports.com/port-2948.htm
+
+    // UDP Server
+    bool debugPvtUdpServer = false;
+    bool enablePvtUdpServer = false;
+    uint16_t pvtUdpServerPort =
+        10110; //https://www.iana.org/assignments/service-names-port-numbers/service-names-port-numbers.xhtml?search=nmea
+
+    uint8_t rtcmTimeoutBeforeUsingLBand_s = 10; //If 10s have passed without RTCM, enable PMP corrections over L-Band if available
+
+    // Automatic Firmware Update
+    bool debugFirmwareUpdate = false;
+    bool enableAutoFirmwareUpdate = false;
+    uint32_t autoFirmwareCheckMinutes = 24 * 60;
+
+    bool debugLBand = false;
+    bool enableCaptivePortal = true;
+
+    //Add new settings above <------------------------------------------------------------>
+
 } Settings;
 Settings settings;
 
@@ -969,11 +1137,12 @@ struct struct_online
     bool lband = false;
     bool lbandCorrections = false;
     bool i2c = false;
-    bool tcpClient = false;
-    bool tcpServer = false;
-    bool tcpClientEthernet = false;
+    bool pvtClient = false;
+    bool pvtServer = false;
+    bool pvtUdpServer = false;
     ethernetStatus_e ethernetStatus = ETH_NOT_STARTED;
-    bool ethernetNTPServer = false; // EthernetUDP
+    bool NTPServer = false; // EthernetUDP
+    bool otaFirmwareUpdate = false;
 } online;
 
 #ifdef COMPILE_WIFI
@@ -1001,5 +1170,5 @@ o/ufQJVtMVT8QtPHRh8jrdkPSHCa2XV4cdFyQzR1bldZwgJcJmApzyMZFo6IQ6XU
 rqXRfboQnoZsG4q5WTP468SQvvG5
 -----END CERTIFICATE-----
 )=====";
-#endif  // COMPILE_L_BAND
-#endif  // COMPILE_WIFI
+#endif // COMPILE_L_BAND
+#endif // COMPILE_WIFI

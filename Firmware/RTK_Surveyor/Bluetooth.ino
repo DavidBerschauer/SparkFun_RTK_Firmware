@@ -27,9 +27,10 @@
 // Locals - compiled out
 //----------------------------------------
 
+static volatile BTState bluetoothState = BT_OFF;
+
 #ifdef COMPILE_BT
 BTSerialInterface *bluetoothSerial;
-static volatile BTState bluetoothState = BT_OFF;
 
 //----------------------------------------
 // Bluetooth Routines - compiled out
@@ -154,9 +155,30 @@ void bluetoothStart()
             strncpy(stateName, "Rover-", sizeof(stateName) - 1);
         else if (systemState >= STATE_BASE_NOT_STARTED && systemState <= STATE_BASE_FIXED_TRANSMITTING)
             strncpy(stateName, "Base-", sizeof(stateName) - 1);
+        else
+            log_d("State out of range for Bluetooth Broadcast: %d", systemState);
 
-        snprintf(deviceName, sizeof(deviceName), "%s %s%02X%02X", platformPrefix, stateName, btMACAddress[4],
+        char productName[50] = {0};
+        strncpy(productName, platformPrefix, sizeof(productName));
+
+        // BLE is limited to ~28 characters in the device name. Shorten platformPrefix if needed.
+        if (settings.bluetoothRadioType == BLUETOOTH_RADIO_BLE)
+        {
+            if (strcmp(productName, "Facet L-Band Direct") == 0)
+            {
+                strncpy(productName, "Facet L-Band", sizeof(productName));
+            }
+        }
+
+        snprintf(deviceName, sizeof(deviceName), "%s %s%02X%02X", productName, stateName, btMACAddress[4],
                  btMACAddress[5]);
+
+        if (strlen(deviceName) > 28)
+        {
+            if (ENABLE_DEVELOPER)
+                systemPrintf("Warning! The Bluetooth device name '%s' is %d characters long. It may not work in BLE mode.\r\n", deviceName, 
+                             strlen(deviceName));
+        }
 
         // Select Bluetooth setup
         if (settings.bluetoothRadioType == BLUETOOTH_RADIO_OFF)
@@ -214,7 +236,11 @@ void bluetoothStart()
         bluetoothSerial->register_callback(bluetoothCallback); // Controls BT Status LED on Surveyor
         bluetoothSerial->setTimeout(250);
 
-        systemPrint("Bluetooth broadcasting as: ");
+        if (settings.bluetoothRadioType == BLUETOOTH_RADIO_SPP)
+            systemPrint("Bluetooth SPP broadcasting as: ");
+        else if (settings.bluetoothRadioType == BLUETOOTH_RADIO_BLE)
+            systemPrint("Bluetooth Low-Energy broadcasting as: ");
+
         systemPrintln(deviceName);
 
         // Start task for controlling Bluetooth pair LED
@@ -226,7 +252,7 @@ void bluetoothStart()
         }
 
         bluetoothState = BT_NOTCONNECTED;
-        reportHeapNow();
+        reportHeapNow(false);
     }
 #endif // COMPILE_BT
 }
@@ -267,7 +293,7 @@ void bluetoothStop()
         log_d("Bluetooth turned off");
 
         bluetoothState = BT_OFF;
-        reportHeapNow();
+        reportHeapNow(false);
     }
 #endif // COMPILE_BT
     bluetoothIncomingRTCM = false;

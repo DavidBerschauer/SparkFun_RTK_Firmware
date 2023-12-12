@@ -8,15 +8,15 @@
 
 #define MQTT_CERT_SIZE 2000
 
-static SFE_UBLOX_GNSS_SUPER i2cLBand; // NEO-D9S
-
 // The PointPerfect token is provided at compile time via build flags
+#define DEVELOPMENT_TOKEN 0xAA, 0xBB, 0xCC, 0xDD, 0x00, 0x11, 0x22, 0x33, 0x0A, 0x0B, 0x0C, 0x0D, 0x00, 0x01, 0x02, 0x03
 #ifndef POINTPERFECT_TOKEN
-#define POINTPERFECT_TOKEN                                                                                             \
-    0xAA, 0xBB, 0xCC, 0xDD, 0x00, 0x11, 0x22, 0x33, 0x0A, 0x0B, 0x0C, 0x0D, 0x00, 0x01, 0x02, 0x03
+#warning Using the DEVELOPMENT_TOKEN for point perfect!
+#define POINTPERFECT_TOKEN DEVELOPMENT_TOKEN
 #endif // POINTPERFECT_TOKEN
 
-static uint8_t pointPerfectTokenArray[16] = {POINTPERFECT_TOKEN}; // Token in HEX form
+static const uint8_t developmentTokenArray[16] = {DEVELOPMENT_TOKEN};   // Token in HEX form
+static const uint8_t pointPerfectTokenArray[16] = {POINTPERFECT_TOKEN}; // Token in HEX form
 
 static const char *pointPerfectAPI = "https://api.thingstream.io/ztp/pointperfect/credentials";
 
@@ -53,19 +53,17 @@ void menuPointPerfectKeys()
         if (strlen(settings.pointPerfectCurrentKey) > 0 && settings.pointPerfectCurrentKeyStart > 0 &&
             settings.pointPerfectCurrentKeyDuration > 0)
         {
-            long long unixEpoch = thingstreamEpochToGPSEpoch(settings.pointPerfectCurrentKeyStart,
-                                                             settings.pointPerfectCurrentKeyDuration);
+            long long gpsEpoch = thingstreamEpochToGPSEpoch(settings.pointPerfectCurrentKeyStart);
 
-            uint16_t keyGPSWeek;
-            uint32_t keyGPSToW;
-            unixEpochToWeekToW(unixEpoch, &keyGPSWeek, &keyGPSToW);
+            gpsEpoch += (settings.pointPerfectCurrentKeyDuration / 1000) -
+                        1; // Add key duration back to the key start date to get key expiration
 
-            long expDay;
-            long expMonth;
-            long expYear;
-            gpsWeekToWToDate(keyGPSWeek, keyGPSToW, &expDay, &expMonth, &expYear);
+            systemPrintf("%s\r\n", printDateFromGPSEpoch(gpsEpoch));
 
-            systemPrintf("%02ld/%02ld/%ld\r\n", expDay, expMonth, expYear);
+            if (settings.debugLBand == true)
+                systemPrintf("settings.pointPerfectCurrentKeyDuration: %lld (%d)\r\n",
+                             settings.pointPerfectCurrentKeyDuration,
+                             settings.pointPerfectCurrentKeyDuration / (1000L * 60 * 60 * 24));
         }
         else
             systemPrintln("N/A");
@@ -80,19 +78,12 @@ void menuPointPerfectKeys()
         if (strlen(settings.pointPerfectNextKey) > 0 && settings.pointPerfectNextKeyStart > 0 &&
             settings.pointPerfectNextKeyDuration > 0)
         {
-            long long unixEpoch =
-                thingstreamEpochToGPSEpoch(settings.pointPerfectNextKeyStart, settings.pointPerfectNextKeyDuration);
+            long long gpsEpoch = thingstreamEpochToGPSEpoch(settings.pointPerfectNextKeyStart);
 
-            uint16_t keyGPSWeek;
-            uint32_t keyGPSToW;
-            unixEpochToWeekToW(unixEpoch, &keyGPSWeek, &keyGPSToW);
+            gpsEpoch += (settings.pointPerfectNextKeyDuration /
+                         1000); // Add key duration back to the key start date to get key expiration
 
-            long expDay;
-            long expMonth;
-            long expYear;
-            gpsWeekToWToDate(keyGPSWeek, keyGPSToW, &expDay, &expMonth, &expYear);
-
-            systemPrintf("%02ld/%02ld/%ld\r\n", expDay, expMonth, expYear);
+            systemPrintf("%s\r\n", printDateFromGPSEpoch(gpsEpoch));
         }
         else
             systemPrintln("N/A");
@@ -124,23 +115,25 @@ void menuPointPerfectKeys()
                 systemPrintln("Date invalid. Please try again.");
             }
 
-            dateToKeyStartDuration(expDay, expMonth, expYear, &settings.pointPerfectCurrentKeyStart,
-                                   &settings.pointPerfectCurrentKeyDuration);
+            dateToKeyStart(expDay, expMonth, expYear, &settings.pointPerfectCurrentKeyStart);
+
+            // The u-blox API reports key durations of 5 weeks, but the web interface reports expiration dates
+            // that are 4 weeks.
+            // If the user has manually entered a date, force duration down to four weeks
+            settings.pointPerfectCurrentKeyDuration = (1000LL * 60 * 60 * 24 * 28);
 
             // Calculate the next key expiration date
-            if (settings.pointPerfectNextKeyStart == 0)
-            {
-                settings.pointPerfectNextKeyStart = settings.pointPerfectCurrentKeyStart +
-                                                    settings.pointPerfectCurrentKeyDuration +
-                                                    1; // Next key starts after current key
-                settings.pointPerfectNextKeyDuration = settings.pointPerfectCurrentKeyDuration;
+            settings.pointPerfectNextKeyStart = settings.pointPerfectCurrentKeyStart +
+                                                settings.pointPerfectCurrentKeyDuration +
+                                                1; // Next key starts after current key
+            settings.pointPerfectNextKeyDuration = settings.pointPerfectCurrentKeyDuration;
 
-                if (ENABLE_DEVELOPER)
-                {
-                    systemPrintf("  settings.pointPerfectNextKeyStart: %lld\r\n", settings.pointPerfectNextKeyStart);
-                    systemPrintf("  settings.pointPerfectNextKeyDuration: %lld\r\n",
-                                 settings.pointPerfectNextKeyDuration);
-                }
+            if (settings.debugLBand == true)
+            {
+                systemPrintf("  settings.pointPerfectCurrentKeyStart: %lld - %s\r\n", settings.pointPerfectCurrentKeyStart, printDateFromUnixEpoch(settings.pointPerfectCurrentKeyStart / 1000));
+                systemPrintf("  settings.pointPerfectCurrentKeyDuration: %lld - %s\r\n", settings.pointPerfectCurrentKeyDuration, printDaysFromDuration(settings.pointPerfectCurrentKeyDuration));
+                systemPrintf("  settings.pointPerfectNextKeyStart: %lld - %s\r\n", settings.pointPerfectNextKeyStart, printDateFromUnixEpoch(settings.pointPerfectNextKeyStart / 1000));
+                systemPrintf("  settings.pointPerfectNextKeyDuration: %lld - %s\r\n", settings.pointPerfectNextKeyDuration, printDaysFromDuration(settings.pointPerfectNextKeyDuration));
             }
         }
         else if (incoming == 4)
@@ -161,8 +154,7 @@ void menuPointPerfectKeys()
                 systemPrintln("Date invalid. Please try again.");
             }
 
-            dateToKeyStartDuration(expDay, expMonth, expYear, &settings.pointPerfectNextKeyStart,
-                                   &settings.pointPerfectNextKeyDuration);
+            dateToKeyStart(expDay, expMonth, expYear, &settings.pointPerfectNextKeyStart);
         }
         else if (incoming == INPUT_RESPONSE_GETNUMBER_EXIT)
             break;
@@ -175,10 +167,57 @@ void menuPointPerfectKeys()
     clearBuffer(); // Empty buffer of any newline chars
 }
 
+// Given a GPS Epoch, return a DD/MM/YYYY string
+char *printDateFromGPSEpoch(long long gpsEpoch)
+{
+    uint16_t keyGPSWeek;
+    uint32_t keyGPSToW;
+    epochToWeekToW(gpsEpoch, &keyGPSWeek, &keyGPSToW);
+
+    long expDay;
+    long expMonth;
+    long expYear;
+    gpsWeekToWToDate(keyGPSWeek, keyGPSToW, &expDay, &expMonth, &expYear);
+
+    char *response = (char *)malloc(strlen("01/01/1010"));
+
+    sprintf(response, "%02ld/%02ld/%ld", expDay, expMonth, expYear);
+    return (response);
+}
+
+// Given a Unix Epoch, return a DD/MM/YYYY string
+// https://www.epochconverter.com/programming/c
+char *printDateFromUnixEpoch(long long unixEpoch)
+{
+  char *buf = (char *)malloc(strlen("01/01/2023") + 1); //Make room for terminator
+  time_t rawtime = unixEpoch;
+
+  struct tm ts;
+  ts = *localtime(&rawtime);
+
+  // Format time, "dd/mm/yyyy"
+  strftime(buf, strlen("01/01/2023") + 1, "%d/%m/%Y", &ts);
+  return (buf);
+}
+
+// Given a duration in ms, print days
+char *printDaysFromDuration(long long duration)
+{
+  float days = duration / (1000.0 * 60 * 60 * 24); //Convert ms to days
+
+  char *response = (char *)malloc(strlen("34.9") + 1); //Make room for terminator
+  sprintf(response, "%0.2f", days);
+  return (response);
+}
+
 // Connect to 'home' WiFi and then ThingStream API. This will attach this unique device to the ThingStream network.
 bool pointperfectProvisionDevice()
 {
 #ifdef COMPILE_WIFI
+    bool bluetoothOriginallyConnected = false;
+    if (bluetoothState == BT_CONNECTED)
+        bluetoothOriginallyConnected = true;
+
     bluetoothStop(); // Free heap before starting secure client (requires ~70KB)
 
     DynamicJsonDocument *jsonZtp = nullptr;
@@ -200,10 +239,28 @@ bool pointperfectProvisionDevice()
                  whitelistID[2], whitelistID[3], whitelistID[4], whitelistID[5]);
 #endif // WHITELISTED_ID
 
+        // Given name must between 1 and 50 characters
         char givenName[100];
         char versionString[9];
         getFirmwareVersion(versionString, sizeof(versionString), false);
-        snprintf(givenName, sizeof(givenName), "SparkFun RTK %s %s - %s", platformPrefix, versionString, hardwareID); // Get ready for JSON
+
+        if (productVariant == RTK_FACET_LBAND)
+        {
+            // Facet L-Band v3.12 AABBCCDD1122
+            snprintf(givenName, sizeof(givenName), "Facet LBand %s - %s", versionString,
+                     hardwareID); // Get ready for JSON
+        }
+        else if (productVariant == RTK_FACET_LBAND_DIRECT)
+        {
+            // Facet L-Band Direct v3.12 AABBCCDD1122
+            snprintf(givenName, sizeof(givenName), "Facet LBand Direct %s - %s", versionString,
+                     hardwareID); // Get ready for JSON
+        }
+
+        if (strlen(givenName) >= 50)
+        {
+            systemPrintf("Error: GivenName '%s' too long: %d bytes\r\n", givenName, strlen(givenName));
+        }
 
         StaticJsonDocument<256> pointPerfectAPIPost;
 
@@ -213,6 +270,8 @@ bool pointperfectProvisionDevice()
         {
             // Convert uint8_t array into string with dashes in spots
             // We must assume u-blox will not change the position of their dashes or length of their token
+            if (!memcmp(pointPerfectTokenArray, developmentTokenArray, sizeof(developmentTokenArray)))
+                systemPrintln("Warning: Using the development token!");
             for (int x = 0; x < sizeof(pointPerfectTokenArray); x++)
             {
                 char temp[3];
@@ -274,34 +333,54 @@ bool pointperfectProvisionDevice()
             }
             else
             {
-                const int tempHolderSize = 2000;
-                tempHolderPtr = (char *)malloc(tempHolderSize);
+                tempHolderPtr = (char *)malloc(MQTT_CERT_SIZE);
                 if (!tempHolderPtr)
                 {
                     systemPrintln("ERROR - Failed to allocate tempHolderPtr buffer!\r\n");
                     break;
                 }
-                strncpy(tempHolderPtr, (const char *)((*jsonZtp)["certificate"]), tempHolderSize - 1);
+                strncpy(tempHolderPtr, (const char *)((*jsonZtp)["certificate"]), MQTT_CERT_SIZE - 1);
                 // log_d("len of PrivateCert: %d", strlen(tempHolderPtr));
                 // log_d("privateCert: %s", tempHolderPtr);
                 recordFile("certificate", tempHolderPtr, strlen(tempHolderPtr));
 
-                strncpy(tempHolderPtr, (const char *)((*jsonZtp)["privateKey"]), tempHolderSize - 1);
+                strncpy(tempHolderPtr, (const char *)((*jsonZtp)["privateKey"]), MQTT_CERT_SIZE - 1);
                 // log_d("len of privateKey: %d", strlen(tempHolderPtr));
                 // log_d("privateKey: %s", tempHolderPtr);
                 recordFile("privateKey", tempHolderPtr, strlen(tempHolderPtr));
 
-                strcpy(settings.pointPerfectClientID, (const char *)((*jsonZtp)["clientId"]));
-                strcpy(settings.pointPerfectBrokerHost, (const char *)((*jsonZtp)["brokerHost"]));
-                strcpy(settings.pointPerfectLBandTopic, (const char *)((*jsonZtp)["subscriptions"][0]["path"]));
+                // Validate the keys
+                if (!checkCertificates())
+                {
+                    systemPrintln("ERROR - Failed to validate the Point Perfect certificates!");
+                }
+                else
+                {
+                    if (settings.debugPpCertificate)
+                        systemPrintln("Certificates written to the SD card.");
 
-                strcpy(settings.pointPerfectNextKey, (const char *)((*jsonZtp)["dynamickeys"]["next"]["value"]));
-                settings.pointPerfectNextKeyDuration = (*jsonZtp)["dynamickeys"]["next"]["duration"];
-                settings.pointPerfectNextKeyStart = (*jsonZtp)["dynamickeys"]["next"]["start"];
+                    strcpy(settings.pointPerfectClientID, (const char *)((*jsonZtp)["clientId"]));
+                    strcpy(settings.pointPerfectBrokerHost, (const char *)((*jsonZtp)["brokerHost"]));
+                    strcpy(settings.pointPerfectLBandTopic, (const char *)((*jsonZtp)["subscriptions"][0]["path"]));
 
-                strcpy(settings.pointPerfectCurrentKey, (const char *)((*jsonZtp)["dynamickeys"]["current"]["value"]));
-                settings.pointPerfectCurrentKeyDuration = (*jsonZtp)["dynamickeys"]["current"]["duration"];
-                settings.pointPerfectCurrentKeyStart = (*jsonZtp)["dynamickeys"]["current"]["start"];
+                    strcpy(settings.pointPerfectCurrentKey, (const char *)((*jsonZtp)["dynamickeys"]["current"]["value"]));
+                    settings.pointPerfectCurrentKeyDuration = (*jsonZtp)["dynamickeys"]["current"]["duration"];
+                    settings.pointPerfectCurrentKeyStart = (*jsonZtp)["dynamickeys"]["current"]["start"];
+
+                    strcpy(settings.pointPerfectNextKey, (const char *)((*jsonZtp)["dynamickeys"]["next"]["value"]));
+                    settings.pointPerfectNextKeyDuration = (*jsonZtp)["dynamickeys"]["next"]["duration"];
+                    settings.pointPerfectNextKeyStart = (*jsonZtp)["dynamickeys"]["next"]["start"];
+                
+                    if (settings.debugLBand == true)
+                    {
+                        systemPrintf("  pointPerfectCurrentKey: %s\r\n", settings.pointPerfectCurrentKey);
+                        systemPrintf("  pointPerfectCurrentKeyStart: %lld - %s\r\n", settings.pointPerfectCurrentKeyStart, printDateFromUnixEpoch(settings.pointPerfectCurrentKeyStart / 1000)); //printDateFromUnixEpoch expects seconds
+                        systemPrintf("  pointPerfectCurrentKeyDuration: %lld - %s\r\n", settings.pointPerfectCurrentKeyDuration, printDaysFromDuration(settings.pointPerfectCurrentKeyDuration));
+                        systemPrintf("  pointPerfectNextKey: %s\r\n", settings.pointPerfectNextKey);
+                        systemPrintf("  pointPerfectNextKeyStart: %lld - %s\r\n", settings.pointPerfectNextKeyStart, printDateFromUnixEpoch(settings.pointPerfectNextKeyStart / 1000)); 
+                        systemPrintf("  pointPerfectNextKeyDuration: %lld - %s\r\n", settings.pointPerfectNextKeyDuration, printDaysFromDuration(settings.pointPerfectNextKeyDuration));
+                    }
+                }
             }
         } // HTTP Response was 200
 
@@ -317,7 +396,8 @@ bool pointperfectProvisionDevice()
     if (jsonZtp)
         delete jsonZtp;
 
-    bluetoothStart();
+    if (bluetoothOriginallyConnected == true)
+        bluetoothStart();
 
     return (retVal);
 #else  // COMPILE_WIFI
@@ -338,6 +418,10 @@ bool checkCertificates()
     keyContents = (char *)malloc(MQTT_CERT_SIZE);
     if ((!certificateContents) || (!keyContents))
     {
+        if (certificateContents)
+            free(certificateContents);
+        if (keyContents)
+            free(keyContents);
         systemPrintln("Failed to allocate content buffers!");
         return (false);
     }
@@ -348,7 +432,8 @@ bool checkCertificates()
 
     if (checkCertificateValidity(certificateContents, strlen(certificateContents)) == false)
     {
-        log_d("Certificate is corrupt.");
+        if (settings.debugPpCertificate)
+            systemPrintln("Certificate is corrupt.");
         validCertificates = false;
     }
 
@@ -356,9 +441,10 @@ bool checkCertificates()
     memset(keyContents, 0, MQTT_CERT_SIZE);
     loadFile("privateKey", keyContents);
 
-    if (checkCertificateValidity(keyContents, strlen(keyContents)) == false)
+    if (checkPrivateKeyValidity(keyContents, strlen(keyContents)) == false)
     {
-        log_d("PrivateKey is corrupt.");
+        if (settings.debugPpCertificate)
+            systemPrintln("PrivateKey is corrupt.");
         validCertificates = false;
     }
 
@@ -368,6 +454,7 @@ bool checkCertificates()
     if (keyContents)
         free(keyContents);
 
+    systemPrintln("Stored certificates are valid!");
     return (validCertificates);
 }
 
@@ -388,10 +475,36 @@ bool checkCertificateValidity(char *certificateContent, int certificateContentSi
 
     if (result_code < 0)
     {
-        log_d("Cert formatting invalid");
+        if (settings.debugPpCertificate)
+            systemPrintln("ERROR - Invalid certificate format!");
         return (false);
     }
 
+    return (true);
+}
+
+// Check if a given private key is in a valid format
+// This was created to detect corrupt or invalid private keys caused by bugs in v3.0 to and including v3.3.
+// See https://github.com/Mbed-TLS/mbedtls/blob/development/library/pkparse.c
+bool checkPrivateKeyValidity(char *privateKey, int privateKeySize)
+{
+    // Check for valid format of private key
+    // From ssl_client.cpp
+    // https://stackoverflow.com/questions/70670070/mbedtls-cannot-parse-valid-x509-certificate
+    mbedtls_pk_context pk;
+    mbedtls_pk_init(&pk);
+
+    int result_code =
+        mbedtls_pk_parse_key(&pk,
+                             (unsigned char *)privateKey, privateKeySize + 1,
+                             nullptr, 0);
+    mbedtls_pk_free(&pk);
+    if (result_code < 0)
+    {
+        if (settings.debugPpCertificate)
+            systemPrintln("ERROR - Invalid private key format!");
+        return (false);
+    }
     return (true);
 }
 
@@ -414,6 +527,10 @@ void erasePointperfectCredentials()
 bool pointperfectUpdateKeys()
 {
 #ifdef COMPILE_WIFI
+    bool bluetoothOriginallyConnected = false;
+    if (bluetoothState == BT_CONNECTED)
+        bluetoothOriginallyConnected = true;
+
     bluetoothStop(); // Release available heap to allow room for TLS
 
     char *certificateContents = nullptr; // Holds the contents of the keys prior to MQTT connection
@@ -428,6 +545,8 @@ bool pointperfectUpdateKeys()
         keyContents = (char *)malloc(MQTT_CERT_SIZE);
         if ((!certificateContents) || (!keyContents))
         {
+            if (certificateContents)
+                free(certificateContents);
             systemPrintln("Failed to allocate content buffers!");
             break;
         }
@@ -529,7 +648,8 @@ bool pointperfectUpdateKeys()
     if (certificateContents)
         free(certificateContents);
 
-    bluetoothStart();
+    if (bluetoothOriginallyConnected == true)
+        bluetoothStart();
 
     // Return the key status
     return (gotKeys);
@@ -594,9 +714,22 @@ void mqttCallback(char *topic, byte *message, unsigned int length)
 
         settings.pointPerfectCurrentKeyDuration =
             settings.pointPerfectNextKeyStart - settings.pointPerfectCurrentKeyStart - 1;
-        settings.pointPerfectNextKeyDuration =
-            settings.pointPerfectCurrentKeyDuration; // We assume next key duration is the same as current key duration
-                                                     // because we have to
+        // settings.pointPerfectNextKeyDuration =
+        //     settings.pointPerfectCurrentKeyDuration; // We assume next key duration is the same as current key
+        //     duration because we have to
+
+        settings.pointPerfectNextKeyDuration = (1000LL * 60 * 60 * 24 * 28) - 1; // Assume next key duration is 28 days
+
+        if (settings.debugLBand == true)
+        {
+            systemPrintln();
+            systemPrintf("  pointPerfectCurrentKey: %s\r\n", settings.pointPerfectCurrentKey);
+            systemPrintf("  pointPerfectCurrentKeyStart: %lld - %s\r\n", settings.pointPerfectCurrentKeyStart, printDateFromUnixEpoch(settings.pointPerfectCurrentKeyStart));
+            systemPrintf("  pointPerfectCurrentKeyDuration: %lld - %s\r\n", settings.pointPerfectCurrentKeyDuration, printDaysFromDuration(settings.pointPerfectCurrentKeyDuration));
+            systemPrintf("  pointPerfectNextKey: %s\r\n", settings.pointPerfectNextKey);
+            systemPrintf("  pointPerfectNextKeyStart: %lld - %s\r\n", settings.pointPerfectNextKeyStart, printDateFromUnixEpoch(settings.pointPerfectNextKeyStart));
+            systemPrintf("  pointPerfectNextKeyDuration: %lld - %s\r\n", settings.pointPerfectNextKeyDuration, printDaysFromDuration(settings.pointPerfectNextKeyDuration));
+        }
     }
 
     mqttMessageReceived = true;
@@ -673,10 +806,9 @@ int daysFromEpoch(long long endEpoch)
 // Add leap seconds (the API reports start times with GPS leap seconds removed)
 // Convert from unix epoch (the API reports unix epoch time) to GPS epoch (the NED-D9S expects)
 // Note: I believe the Thingstream API is reporting startEpoch 18 seconds less than actual
-// Even though we are adding 18 leap seconds, the ToW is still coming out as 518400 instead of 518418 (midnight)
-long long thingstreamEpochToGPSEpoch(long long startEpoch, long long duration)
+long long thingstreamEpochToGPSEpoch(long long startEpoch)
 {
-    long long epoch = startEpoch + duration;
+    long long epoch = startEpoch;
     epoch /= 1000; // Convert PointPerfect ms Epoch to s
 
     // Convert Unix Epoch time from PointPerfect to GPS Time Of Week needed for UBX message
@@ -696,10 +828,10 @@ uint8_t getLeapSeconds()
             return (leapSeconds);
         }
     }
-    return (18); // Default to 18 if GNSS if offline
+    return (18); // Default to 18 if GNSS is offline
 }
 
-// Covert a given the key's expiration date to a GPS Epoch, so that we can calculate GPS Week and ToW
+// Covert a given key's expiration date to a GPS Epoch, so that we can calculate GPS Week and ToW
 // Add a millisecond to roll over from 11:59UTC to midnight of the following day
 // Convert from unix epoch (time lib outputs unix) to GPS epoch (the NED-D9S expects)
 long long dateToGPSEpoch(uint8_t day, uint8_t month, uint16_t year)
@@ -713,10 +845,10 @@ long long dateToGPSEpoch(uint8_t day, uint8_t month, uint16_t year)
 }
 
 // Given an epoch, set the GPSWeek and GPSToW
-void unixEpochToWeekToW(long long unixEpoch, uint16_t *GPSWeek, uint32_t *GPSToW)
+void epochToWeekToW(long long epoch, uint16_t *GPSWeek, uint32_t *GPSToW)
 {
-    *GPSWeek = (uint16_t)(unixEpoch / (7 * 24 * 60 * 60));
-    *GPSToW = (uint32_t)(unixEpoch % (7 * 24 * 60 * 60));
+    *GPSWeek = (uint16_t)(epoch / (7 * 24 * 60 * 60));
+    *GPSToW = (uint32_t)(epoch % (7 * 24 * 60 * 60));
 }
 
 // Given an epoch, set the GPSWeek and GPSToW
@@ -755,9 +887,8 @@ long dateToUnixEpoch(uint8_t day, uint8_t month, uint16_t year)
     return (t_of_day);
 }
 
-// Given a date, calculate and store the key start and duration
-void dateToKeyStartDuration(uint8_t expDay, uint8_t expMonth, uint16_t expYear, uint64_t *settingsKeyStart,
-                            uint64_t *settingsKeyDuration)
+// Given a date, calculate and return the key start in unixEpoch
+void dateToKeyStart(uint8_t expDay, uint8_t expMonth, uint16_t expYear, uint64_t *settingsKeyStart)
 {
     long long expireUnixEpoch = dateToUnixEpoch(expDay, expMonth, expYear);
 
@@ -771,19 +902,20 @@ void dateToKeyStartDuration(uint8_t expDay, uint8_t expMonth, uint16_t expYear, 
 
     // PointPerfect uses/reports unix epochs in milliseconds
     *settingsKeyStart = startUnixEpoch * 1000L; // Convert to ms
-    *settingsKeyDuration =
-        (28 * 24 * 60 * 60 * 1000LL) - 1; // We assume keys last for 28 days (minus one ms to be before midnight)
 
-    // Print ToW and Week for debugging
     uint16_t keyGPSWeek;
     uint32_t keyGPSToW;
-    long long unixEpoch = thingstreamEpochToGPSEpoch(*settingsKeyStart, *settingsKeyDuration);
-    unixEpochToWeekToW(unixEpoch, &keyGPSWeek, &keyGPSToW);
+    long long gpsEpoch = thingstreamEpochToGPSEpoch(*settingsKeyStart);
 
-    if (ENABLE_DEVELOPER)
+    epochToWeekToW(gpsEpoch, &keyGPSWeek, &keyGPSToW);
+
+    // Print ToW and Week for debugging
+    if (settings.debugLBand == true)
     {
-        systemPrintf("  KeyStart: %lld\r\n", *settingsKeyStart);
-        systemPrintf("  KeyDuration: %lld\r\n", *settingsKeyDuration);
+        systemPrintf("  expireUnixEpoch: %lld - %s\r\n", expireUnixEpoch, printDateFromUnixEpoch(expireUnixEpoch));
+        systemPrintf("  startUnixEpoch: %lld - %s\r\n", startUnixEpoch, printDateFromUnixEpoch(startUnixEpoch));
+        systemPrintf("  gpsEpoch: %lld - %s\r\n", gpsEpoch, printDateFromGPSEpoch(gpsEpoch));
+        systemPrintf("  KeyStart: %lld - %s\r\n", *settingsKeyStart, printDateFromUnixEpoch(*settingsKeyStart));
         systemPrintf("  keyGPSWeek: %d\r\n", keyGPSWeek);
         systemPrintf("  keyGPSToW: %d\r\n", keyGPSToW);
     }
@@ -841,7 +973,9 @@ long gpsToMjd(long GpsCycle, long GpsWeek, long GpsSeconds)
 void pushRXMPMP(UBX_RXM_PMP_message_data_t *pmpData)
 {
     uint16_t payloadLen = ((uint16_t)pmpData->lengthMSB << 8) | (uint16_t)pmpData->lengthLSB;
-    log_d("Pushing %d bytes of RXM-PMP data to GNSS", payloadLen);
+
+    if (settings.debugLBand == true && !inMainMenu)
+        systemPrintf("Pushing %d bytes of RXM-PMP data to GNSS\r\n", payloadLen);
 
     theGNSS.pushRawData(&pmpData->sync1, (size_t)payloadLen + 6); // Push the sync chars, class, ID, length and payload
     theGNSS.pushRawData(&pmpData->checksumA, (size_t)2);          // Push the checksum bytes
@@ -854,7 +988,7 @@ void pointperfectApplyKeys()
     {
         if (online.gnss == false)
         {
-            log_d("ZED-F9P not avaialable");
+            log_d("ZED-F9P not available");
             return;
         }
 
@@ -879,14 +1013,13 @@ void pointperfectApplyKeys()
 
             uint16_t currentKeyGPSWeek;
             uint32_t currentKeyGPSToW;
-            long long epoch = thingstreamEpochToGPSEpoch(settings.pointPerfectCurrentKeyStart,
-                                                         settings.pointPerfectCurrentKeyDuration);
-            unixEpochToWeekToW(epoch, &currentKeyGPSWeek, &currentKeyGPSToW);
+            long long epoch = thingstreamEpochToGPSEpoch(settings.pointPerfectCurrentKeyStart);
+            epochToWeekToW(epoch, &currentKeyGPSWeek, &currentKeyGPSToW);
 
             uint16_t nextKeyGPSWeek;
             uint32_t nextKeyGPSToW;
-            epoch = thingstreamEpochToGPSEpoch(settings.pointPerfectNextKeyStart, settings.pointPerfectNextKeyDuration);
-            unixEpochToWeekToW(epoch, &nextKeyGPSWeek, &nextKeyGPSToW);
+            epoch = thingstreamEpochToGPSEpoch(settings.pointPerfectNextKeyStart);
+            epochToWeekToW(epoch, &nextKeyGPSWeek, &nextKeyGPSToW);
 
             theGNSS.setVal8(UBLOX_CFG_SPARTN_USE_SOURCE, 1); // use LBAND PMP message
 
@@ -917,7 +1050,9 @@ void pointperfectApplyKeys()
 // Check if the PMP data is being decrypted successfully
 void checkRXMCOR(UBX_RXM_COR_data_t *ubxDataStruct)
 {
-    log_d("L-Band Eb/N0[dB] (>9 is good): %0.2f", ubxDataStruct->ebno * pow(2, -3));
+    if (settings.debugLBand == true && !inMainMenu)
+        systemPrintf("L-Band Eb/N0[dB] (>9 is good): %0.2f\r\n", ubxDataStruct->ebno * pow(2, -3));
+
     lBandEBNO = ubxDataStruct->ebno * pow(2, -3);
 
     if (ubxDataStruct->statusInfo.bits.msgDecrypted == 2) // Successfully decrypted
@@ -927,7 +1062,8 @@ void checkRXMCOR(UBX_RXM_COR_data_t *ubxDataStruct)
     }
     else
     {
-        log_d("PMP decryption failed");
+        if (settings.debugLBand == true && !inMainMenu)
+            systemPrintln("PMP decryption failed");
     }
 }
 
@@ -1006,24 +1142,16 @@ void beginLBand()
     response &= i2cLBand.addCfgValset(UBLOX_CFG_PMP_USE_PRESCRAMBLING, 0);                 // Default 0
     response &= i2cLBand.addCfgValset(UBLOX_CFG_PMP_UNIQUE_WORD, 16238547128276412563ull);
     response &=
-        i2cLBand.addCfgValset(UBLOX_CFG_MSGOUT_UBX_RXM_PMP_I2C, 1); // Ensure UBX-RXM-PMP is enabled on the I2C port
-    response &= i2cLBand.addCfgValset(UBLOX_CFG_MSGOUT_UBX_RXM_PMP_UART1, 1); // Output UBX-RXM-PMP on UART1
-    response &= i2cLBand.addCfgValset(UBLOX_CFG_UART2OUTPROT_UBX, 1);         // Enable UBX output on UART2
-    response &= i2cLBand.addCfgValset(UBLOX_CFG_MSGOUT_UBX_RXM_PMP_UART2, 1); // Output UBX-RXM-PMP on UART2
-    response &= i2cLBand.addCfgValset(UBLOX_CFG_UART1_BAUDRATE, 38400);       // match baudrate with ZED default
-    response &= i2cLBand.addCfgValset(UBLOX_CFG_UART2_BAUDRATE, 38400);       // match baudrate with ZED default
+        i2cLBand.addCfgValset(UBLOX_CFG_MSGOUT_UBX_RXM_PMP_UART1, 0); // Diasable UBX-RXM-PMP on UART1. Not used.
+
     response &= i2cLBand.sendCfgValset();
+
+    lBandCommunicationEnabled = zedEnableLBandCommunication();
 
     if (response == false)
         systemPrintln("L-Band failed to configure");
 
     i2cLBand.softwareResetGNSSOnly(); // Do a restart
-
-    i2cLBand.setRXMPMPmessageCallbackPtr(&pushRXMPMP); // Call pushRXMPMP when new PMP data arrives. Push it to the GNSS
-
-    theGNSS.setRXMCORcallbackPtr(&checkRXMCOR); // Check if the PMP data is being decrypted successfully
-
-    lbandStartTimer = millis();
 
     log_d("L-Band online");
 
@@ -1056,7 +1184,6 @@ void menuPointPerfect()
             }
             else
             {
-
                 int daysRemaining =
                     daysFromEpoch(settings.pointPerfectNextKeyStart + settings.pointPerfectNextKeyDuration + 1);
 
@@ -1087,6 +1214,8 @@ void menuPointPerfect()
             systemPrintln("3) Update Keys");
 
         systemPrintln("4) Show device ID");
+
+        systemPrintln("c) Clear the Keys");
 
         systemPrintln("k) Manual Key Entry");
 
@@ -1150,7 +1279,7 @@ void menuPointPerfect()
                 }
             }
 
-            wifiStop();
+            WIFI_STOP();
         }
         else if (incoming == 4)
         {
@@ -1158,6 +1287,11 @@ void menuPointPerfect()
             snprintf(hardwareID, sizeof(hardwareID), "%02X%02X%02X%02X%02X%02X", lbandMACAddress[0], lbandMACAddress[1],
                      lbandMACAddress[2], lbandMACAddress[3], lbandMACAddress[4], lbandMACAddress[5]);
             systemPrintf("Device ID: %s\r\n", hardwareID);
+        }
+        else if (incoming == 'c')
+        {
+            settings.pointPerfectCurrentKey[0] = 0;
+            settings.pointPerfectNextKey[0] = 0;
         }
         else if (incoming == 'k')
         {
@@ -1203,21 +1337,25 @@ void updateLBand()
             lbandCorrectionsReceived = false;
 
         // If we don't get an L-Band fix within Timeout, hot-start ZED-F9x
-        if (carrSoln == 1) // RTK Float
+        if (systemState == STATE_ROVER_RTK_FLOAT)
         {
             if (millis() - lbandLastReport > 1000)
             {
                 lbandLastReport = millis();
-                log_d("ZED restarts: %d Time remaining before L-Band forced restart: %ds", lbandRestarts,
-                      settings.lbandFixTimeout_seconds - ((millis() - lbandStartTimer) / 1000));
+
+                if (settings.debugLBand == true)
+                    systemPrintf("ZED restarts: %d Time remaining before L-Band forced restart: %ds\r\n", lbandRestarts,
+                                 settings.lbandFixTimeout_seconds - ((millis() - lbandTimeFloatStarted) / 1000));
             }
 
             if (settings.lbandFixTimeout_seconds > 0)
             {
-                if ((millis() - lbandStartTimer) > (settings.lbandFixTimeout_seconds * 1000L))
+                if ((millis() - lbandTimeFloatStarted) > (settings.lbandFixTimeout_seconds * 1000L))
                 {
-                    lbandStartTimer = millis(); // Reset timer
                     lbandRestarts++;
+
+                    lbandTimeFloatStarted =
+                        millis(); // Restart timer for L-Band. Don't immediately reset ZED to achieve fix.
 
                     // Hotstart ZED to try to get RTK lock
                     theGNSS.softwareResetGNSSOnly();
@@ -1231,6 +1369,29 @@ void updateLBand()
             lbandTimeToFix = millis();
             log_d("Time to first L-Band fix: %ds", lbandTimeToFix / 1000);
         }
+
+        if ((millis() - rtcmLastPacketReceived) / 1000 > settings.rtcmTimeoutBeforeUsingLBand_s)
+        {
+            // If we have not received RTCM in a certain amount of time,
+            // and if communication was disabled because RTCM was being received at some point,
+            // re-enable L-Band communcation
+            if (lBandCommunicationEnabled == false)
+            {
+                log_d("Enabling L-Band communication due to RTCM timeout");
+                lBandCommunicationEnabled = zedEnableLBandCommunication();
+            }
+        }
+        else
+        {
+            // If we *have* recently received RTCM then disable corrections from then NEO-D9S L-Band receiver
+            if (lBandCommunicationEnabled == true)
+            {
+                log_d("Disabling L-Band communication due to RTCM reception");
+                lBandCommunicationEnabled = !zedDisableLBandCommunication(); // zedDisableLBandCommunication() returns
+                                                                             // true if we successfully disabled
+            }
+        }
     }
+
 #endif // COMPILE_L_BAND
 }
