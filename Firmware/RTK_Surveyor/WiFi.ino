@@ -33,7 +33,18 @@
 // Globals
 //----------------------------------------
 
-int wifiConnectionAttempts; // Count the number of connection attempts between restarts
+// Interval to use when displaying the IP address
+static const int WIFI_IP_ADDRESS_DISPLAY_INTERVAL = 12 * 1000; // Milliseconds
+
+#define WIFI_MAX_TCP_CLIENTS 4
+
+#define WIFI_MAX_TCP_CLIENTS     4
+
+#define WIFI_HOSTNAME "rtk-express"
+
+//----------------------------------------
+// Locals - compiled out
+//----------------------------------------
 
 #ifdef COMPILE_WIFI
 
@@ -49,6 +60,7 @@ static uint32_t wifiLastConnectionAttempt;
 
 // Throttle the time between connection attempts
 // ms - Max of 4,294,967,295 or 4.3M seconds or 71,000 minutes or 1193 hours or 49 days between attempts
+static int wifiConnectionAttempts = 0;       // Count the number of connection attempts between restarts
 static uint32_t wifiConnectionAttemptsTotal; // Count the number of connection attempts absolutely
 static uint32_t wifiConnectionAttemptTimeout;
 
