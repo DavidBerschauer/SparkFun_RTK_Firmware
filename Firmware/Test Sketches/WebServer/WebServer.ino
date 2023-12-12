@@ -130,7 +130,7 @@ void loop() {
             printWiFiGatewayIp();
 
             // index.html
-            sdCardServer.sdCardWebSite(&server);
+            sdCardServer.sdCardWebSite(&server, false);
 
             //  All other pages
             sdCardServer.onNotFound(&server);

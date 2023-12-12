@@ -5,7 +5,7 @@ Form.ino
 ------------------------------------------------------------------------------*/
 
 #ifdef COMPILE_AP
-
+#include <SDFS.h>
 // Once connected to the access point for WiFi Config, the ESP32 sends current setting values in one long string to
 // websocket After user clicks 'save', data is validated via main.js and a long string of values is returned.
 
@@ -136,6 +136,14 @@ bool startWebServer(bool startWiFi = true, int httpPort = 80)
         webserver->onFileUpload(
             handleUpload); // Run handleUpload function when any file is uploaded. Must be before server.on() calls.
 
+        SD.sdfs = sd;
+
+        webserver->on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+          request->send(SDFS, "/wwwroot/index.html", "text/html");
+        });
+
+        webserver->serveStatic("/", SDFS, "/wwwroot/");
+        /*
         webserver->on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
             AsyncWebServerResponse *response =
                 request->beginResponse_P(200, "text/html", index_html, sizeof(index_html));
@@ -319,7 +327,7 @@ bool startWebServer(bool startWiFi = true, int httpPort = 80)
 
         // Handler for file manager
         webserver->on("/file", HTTP_GET, [](AsyncWebServerRequest *request) { handleFileManager(request); });
-
+        */
         webserver->begin();
 
         log_d("Web Server Started");
