@@ -33,18 +33,7 @@
 // Globals
 //----------------------------------------
 
-// Interval to use when displaying the IP address
-static const int WIFI_IP_ADDRESS_DISPLAY_INTERVAL = 12 * 1000; // Milliseconds
-
-#define WIFI_MAX_TCP_CLIENTS 4
-
-#define WIFI_MAX_TCP_CLIENTS     4
-
-#define WIFI_HOSTNAME "rtk-express"
-
-//----------------------------------------
-// Locals - compiled out
-//----------------------------------------
+int wifiConnectionAttempts; // Count the number of connection attempts between restarts
 
 #ifdef COMPILE_WIFI
 
@@ -60,7 +49,6 @@ static uint32_t wifiLastConnectionAttempt;
 
 // Throttle the time between connection attempts
 // ms - Max of 4,294,967,295 or 4.3M seconds or 71,000 minutes or 1193 hours or 49 days between attempts
-static int wifiConnectionAttempts = 0;       // Count the number of connection attempts between restarts
 static uint32_t wifiConnectionAttemptsTotal; // Count the number of connection attempts absolutely
 static uint32_t wifiConnectionAttemptTimeout;
 
@@ -180,10 +168,11 @@ void menuWiFi()
 // Display the WiFi IP address
 void wifiDisplayIpAddress()
 {
-  systemPrint("WiFi IP address: ");
-  systemPrint(WiFi.localIP());
-  systemPrintf(" Hostname: %s RSSI: %d\r\n", WIFI_HOSTNAME, WiFi.RSSI());
-  wifiDisplayTimer = millis();
+    systemPrint("WiFi IP address: ");
+    systemPrint(WiFi.localIP());
+    systemPrintf(" RSSI: %d\r\n", WiFi.RSSI());
+
+    wifiDisplayTimer = millis();
 }
 
 // Get the WiFi adapter status
@@ -416,9 +405,6 @@ void wifiStart()
 
     log_d("Starting WiFi");
 
-    //Set the hostname to find this device without knowing the IP
-    WiFi.setHostname(WIFI_HOSTNAME);
-    
     wifiSetState(WIFI_CONNECTING); // This starts the state machine running
 
     // Display the heap state
